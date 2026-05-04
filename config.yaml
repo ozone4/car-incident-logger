@@ -58,6 +58,11 @@ known_vehicles:
       min_score: 0.75
       min_matched_traits: 3
 
+dashcam:
+  pre_roll_seconds: 30       # seconds of video before trigger to include
+  post_roll_seconds: 5       # seconds of video after trigger to capture
+  output_path: ./data/dashcam  # where incident clips are saved
+
 notifier:
   chime_enabled: false
   chime_file: ./data/config/chime.wav

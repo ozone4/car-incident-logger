@@ -305,6 +305,8 @@ car-incident-logger/
 │   ├── incident_saver.py        # Saves clip + audio + metadata to disk
 │   ├── plate_database.py        # SQLite plates/incidents/sightings
 │   ├── notifier.py              # Console + chime alerts
+│   ├── dashcam.py               # Dashcam incident capture from rolling buffer
+│   ├── incident_trigger.py      # Abstract trigger interface (web, hardware, ALPR)
 │   ├── alpr_runner.py           # Phase 2: YOLO+PaddleOCR pipeline (deps optional)
 │   ├── multi_frame_voter.py     # Phase 2: aggregate candidates across frames
 │   └── live_matcher.py          # Phase 2 stub: background known-plate alerting
@@ -390,6 +392,60 @@ Once optional ALPR dependencies and `data/models/plate_detector.pt` are installe
 - No external services required — everything runs locally.
 - Use `python` on your Windows PC; the `py` launcher may not be installed.
 - Camera device index: plug in your USB camera, start the web UI, go to `/camera`, and click **Start Preview**. If the wrong camera opens, edit `camera.device_index` on the `/config` page.
+
+---
+
+## Dashcam Incident Capture
+
+The web dashboard includes a dashcam mode that continuously buffers live camera frames and lets you save incident clips with one click.
+
+### How it works
+
+1. Start the web UI and click **Start Preview** on the Camera page (or the camera starts automatically on the Dashboard).
+2. A rolling buffer continuously stores the last N seconds of video frames in memory.
+3. Click **Trigger Incident** on the Dashboard to save a clip with pre-roll (video before the trigger) and optional post-roll (a few seconds after).
+4. The saved clip, metadata JSON, and any live ALPR plate detections are written to `data/dashcam/<timestamp>/`.
+5. The incident appears in the Recent Incidents table and the Incidents page.
+
+### Configuration
+
+```yaml
+dashcam:
+  pre_roll_seconds: 30       # seconds of video before the trigger
+  post_roll_seconds: 5       # seconds of video after the trigger
+  output_path: ./data/dashcam
+```
+
+These values can be adjusted in `config.yaml`. The rolling buffer size automatically accommodates the configured pre-roll.
+
+### Trigger sources
+
+| Source | Status | Description |
+|--------|--------|-------------|
+| Web UI button | Working | Click "Trigger Incident" on the Dashboard |
+| Hardware button (GPIO) | Placeholder | `HardwareButtonTrigger` in `modules/incident_trigger.py` — wire up to GPIO or USB HID |
+| ALPR alert | Planned | Auto-trigger when a known plate is detected |
+
+### Windows usage
+
+```powershell
+# Start the web UI
+python web/app.py
+
+# Or bind to LAN
+python web/app.py --host 0.0.0.0 --port 8080
+```
+
+Open `http://127.0.0.1:5000/` in a browser. Start the camera preview, then use the **Trigger Incident** button on the Dashboard. Saved clips appear in `data\dashcam\`.
+
+ffmpeg is recommended for H.264/MP4 output. Without it, clips are saved as AVI (XVID) via OpenCV.
+
+```powershell
+# Install ffmpeg on Windows (winget)
+winget install ffmpeg
+
+# Or download from https://ffmpeg.org/download.html and add to PATH
+```
 
 ---
 

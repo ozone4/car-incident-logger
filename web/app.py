@@ -39,8 +39,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from modules.camera_capture import CameraCapture  # noqa: E402
 from modules.alpr_runner import ALPRRunner  # noqa: E402
 from modules.config_manager import ConfigManager  # noqa: E402
+from modules.dashcam import DashcamRecorder  # noqa: E402
+from modules.incident_trigger import WebTrigger  # noqa: E402
 from modules.multi_frame_voter import MultiFrameVoter  # noqa: E402
 from modules.plate_database import PlateDatabase  # noqa: E402
+from modules.rolling_buffer import RollingBuffer  # noqa: E402
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -76,6 +79,11 @@ _alpr_state: dict = {
 
 SIGHTING_ACTIVE_TIMEOUT_SECONDS = 5.0
 SIGHTING_HISTORY_LIMIT = 30
+
+# ── Dashcam state ───────────────────────────────────────────────────────────
+_dashcam: Optional[DashcamRecorder] = None
+_dashcam_buffer: Optional[RollingBuffer] = None
+_web_trigger = WebTrigger()
 
 
 # ── Config helpers ────────────────────────────────────────────────────────────
@@ -118,12 +126,14 @@ def _start_camera() -> dict:
         )
         _camera.start()
     logger.info("Camera preview started")
+    _start_dashcam_buffer()
     return {"status": "started"}
 
 
 def _stop_camera() -> dict:
     global _camera
     _alpr_stop_event.set()
+    _stop_dashcam_buffer()
     with _camera_lock:
         if _camera is None or not _camera.is_running:
             return {"status": "not_running"}
@@ -132,6 +142,74 @@ def _stop_camera() -> dict:
     _set_alpr_state(running=False)
     logger.info("Camera preview stopped")
     return {"status": "stopped"}
+
+
+def _start_dashcam_buffer() -> None:
+    """Start the rolling buffer for dashcam capture, attached to the active camera."""
+    global _dashcam, _dashcam_buffer
+    with _camera_lock:
+        cam = _camera
+    if cam is None or not cam.is_running:
+        return
+
+    cfg = _load_config()
+    if _dashcam_buffer is None:
+        _dashcam_buffer = RollingBuffer(
+            duration_seconds=int(cfg.dashcam_pre_roll_seconds) + 5,
+            fps=cfg.camera_fps,
+        )
+        _dashcam_buffer.start(cam.get_frame_queue())
+
+    if _dashcam is None:
+        _dashcam = DashcamRecorder(
+            output_path=cfg.dashcam_output_path,
+            pre_roll_seconds=cfg.dashcam_pre_roll_seconds,
+            post_roll_seconds=cfg.dashcam_post_roll_seconds,
+            fps=cfg.camera_fps,
+        )
+    _dashcam.attach(_dashcam_buffer, cam)
+
+    def _trigger_callback(source: str, meta: dict) -> dict:
+        alpr_plate = meta.get("alpr_plate")
+        recent = meta.get("recent_sightings")
+        result = _dashcam.trigger(source=source, alpr_plate=alpr_plate, recent_sightings=recent)
+        if result.get("ok"):
+            _save_dashcam_incident_to_db(result)
+        return result
+
+    _web_trigger.arm(_trigger_callback)
+    logger.info("Dashcam buffer and trigger armed")
+
+
+def _stop_dashcam_buffer() -> None:
+    global _dashcam_buffer
+    _web_trigger.disarm()
+    if _dashcam_buffer is not None:
+        _dashcam_buffer.stop()
+        _dashcam_buffer = None
+    logger.info("Dashcam buffer stopped")
+
+
+def _save_dashcam_incident_to_db(result: dict) -> None:
+    """Save a dashcam incident to the existing incidents table."""
+    db = _get_db()
+    if db is None:
+        return
+    plate = result.get("plate") or "DASHCAM"
+    metadata = {
+        "timestamp": result.get("timestamp", ""),
+        "clip_path": result.get("clip_path"),
+        "trigger_source": result.get("trigger_source", "web"),
+        "plate": plate,
+        "pre_roll_frames": result.get("pre_roll_frames", 0),
+        "post_roll_frames": result.get("post_roll_frames", 0),
+        "total_frames": result.get("total_frames", 0),
+        "recent_sightings": result.get("recent_sightings", []),
+    }
+    try:
+        db.add_incident(plate, metadata)
+    except Exception as exc:
+        logger.warning("Could not save dashcam incident to DB: %s", exc)
 
 
 def _camera_status() -> dict:
@@ -617,6 +695,51 @@ def alpr_live_start_api():
 @app.route("/alpr/live/stop", methods=["POST"])
 def alpr_live_stop_api():
     return jsonify(_stop_live_alpr())
+
+
+# ── Dashcam routes ───────────────────────────────────────────────────────────
+
+@app.route("/dashcam/status")
+def dashcam_status_api():
+    """Return dashcam buffer status and last trigger result."""
+    status = _dashcam.buffer_status() if _dashcam else {"attached": False}
+    status["trigger_armed"] = _web_trigger.is_armed
+    status["last_result"] = _dashcam.last_result if _dashcam else None
+    status["last_error"] = _dashcam.last_error if _dashcam else None
+    return jsonify(status)
+
+
+@app.route("/dashcam/trigger", methods=["POST"])
+def dashcam_trigger_api():
+    """Trigger a dashcam incident capture from the web UI."""
+    # Gather current ALPR state for metadata
+    meta: dict = {}
+    with _alpr_lock:
+        best = _alpr_state.get("best")
+        if best and best.get("plate"):
+            meta["alpr_plate"] = best["plate"]
+        sightings = _alpr_state.get("sightings", [])
+        if sightings:
+            meta["recent_sightings"] = sightings[:10]
+
+    result = _web_trigger.fire(meta)
+    status_code = 200 if result.get("ok") else 409
+    return jsonify(result), status_code
+
+
+@app.route("/dashcam/clips/<path:subpath>")
+def dashcam_clip_file(subpath):
+    """Serve a dashcam clip file."""
+    cfg = _load_config()
+    clip_dir = cfg.dashcam_output_path.resolve()
+    candidate = (clip_dir / subpath).resolve()
+    try:
+        candidate.relative_to(clip_dir)
+    except ValueError:
+        return "Forbidden", 403
+    if not candidate.exists():
+        return "Not found", 404
+    return send_file(str(candidate))
 
 
 @app.route("/config", methods=["GET", "POST"])

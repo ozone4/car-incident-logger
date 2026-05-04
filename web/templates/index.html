@@ -130,6 +130,77 @@ refreshLiveAlpr();
 setInterval(refreshLiveAlpr, 1500);
 </script>
 
+<div class="status-card" id="dashcam-card" style="margin-top:16px">
+  <div class="label">Dashcam Capture</div>
+  <div id="dashcam-status" class="badge badge-grey">Checking...</div>
+  <div id="dashcam-detail" style="font-size:0.9em;color:#888;margin-top:4px">Start the camera to enable dashcam capture.</div>
+  <div class="card-actions" style="margin-top:8px">
+    <button class="btn btn-danger" id="dashcam-trigger" type="button" disabled>Trigger Incident</button>
+  </div>
+  <div id="dashcam-last" style="font-size:0.85em;margin-top:8px"></div>
+</div>
+
+<script>
+function refreshDashcam() {
+  fetch('/dashcam/status')
+    .then(r => r.json())
+    .then(function(d) {
+      var status = document.getElementById('dashcam-status');
+      var detail = document.getElementById('dashcam-detail');
+      var btn = document.getElementById('dashcam-trigger');
+      var last = document.getElementById('dashcam-last');
+
+      if (d.attached) {
+        status.textContent = 'Buffer active';
+        status.className = 'badge badge-green';
+        detail.textContent = d.frame_count + ' frames buffered (' + d.duration + 's) · pre-roll ' + d.pre_roll_seconds + 's · post-roll ' + d.post_roll_seconds + 's';
+        btn.disabled = !d.trigger_armed;
+      } else {
+        status.textContent = 'Not active';
+        status.className = 'badge badge-grey';
+        detail.textContent = 'Start the camera to enable dashcam capture.';
+        btn.disabled = true;
+      }
+
+      if (d.last_error) {
+        last.innerHTML = '<span style="color:#c33">Last error: ' + escapeHtml(d.last_error) + '</span>';
+      } else if (d.last_result) {
+        var r = d.last_result;
+        var plate = r.plate || '(no plate)';
+        last.innerHTML = 'Last clip: <strong>' + escapeHtml(plate) + '</strong> at ' + escapeHtml(r.timestamp || '') + ' (' + (r.total_frames || 0) + ' frames)';
+      } else {
+        last.textContent = '';
+      }
+    })
+    .catch(function(){ });
+}
+
+document.getElementById('dashcam-trigger').addEventListener('click', function(){
+  var btn = this;
+  btn.disabled = true;
+  btn.textContent = 'Capturing...';
+  fetch('/dashcam/trigger', {method:'POST'})
+    .then(r => r.json())
+    .then(function(d){
+      btn.textContent = 'Trigger Incident';
+      btn.disabled = false;
+      refreshDashcam();
+      if (d.ok) {
+        alert('Incident saved: ' + (d.plate || 'no plate') + ' (' + (d.total_frames || 0) + ' frames)');
+      } else {
+        alert('Capture failed: ' + (d.error || 'unknown error'));
+      }
+    })
+    .catch(function(){
+      btn.textContent = 'Trigger Incident';
+      btn.disabled = false;
+    });
+});
+
+refreshDashcam();
+setInterval(refreshDashcam, 3000);
+</script>
+
 <h2>Recent Incidents</h2>
 {% if incidents %}
 <table>
@@ -137,8 +208,9 @@ setInterval(refreshLiveAlpr, 1500);
     <tr>
       <th>Plate</th>
       <th>Time</th>
+      <th>Source</th>
       <th>Note</th>
-      <th>Confidence</th>
+      <th>Media</th>
     </tr>
   </thead>
   <tbody>
@@ -150,10 +222,13 @@ setInterval(refreshLiveAlpr, 1500);
         </a>
       </td>
       <td class="mono">{{ fmt_ts(inc.timestamp) }}</td>
+      <td>{{ inc.meta.get('trigger_source', 'button') }}</td>
       <td>{{ inc.meta.get('parsed_note') or inc.meta.get('transcript', '') | truncate(80) }}</td>
-      <td>
-        {% if inc.meta.get('confidence') is not none %}
-          {{ "%.0f%%"|format(inc.meta.confidence * 100) }}
+      <td class="file-links">
+        {% if inc.clip_path %}
+          <a href="{{ url_for('serve_media', path=inc.clip_path) }}">clip</a>
+        {% elif inc.meta.get('clip_path') %}
+          <a href="{{ url_for('serve_media', path=inc.meta.clip_path) }}">clip</a>
         {% else %}—{% endif %}
       </td>
     </tr>

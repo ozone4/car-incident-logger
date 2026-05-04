@@ -135,6 +135,20 @@ class ConfigManager:
         profiles = self.get("known_vehicles", "profiles", default=[])
         return profiles if isinstance(profiles, list) else []
 
+    # ── Dashcam ──────────────────────────────────────────────────────────────
+
+    @property
+    def dashcam_pre_roll_seconds(self) -> float:
+        return float(self.get("dashcam", "pre_roll_seconds", default=30.0))
+
+    @property
+    def dashcam_post_roll_seconds(self) -> float:
+        return float(self.get("dashcam", "post_roll_seconds", default=5.0))
+
+    @property
+    def dashcam_output_path(self) -> Path:
+        return Path(self.get("dashcam", "output_path", default="./data/dashcam"))
+
     @property
     def notifier_chime_enabled(self) -> bool:
         return bool(self.get("notifier", "chime_enabled", default=False))
