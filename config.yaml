@@ -1,0 +1,65 @@
+camera:
+  device_index: 0
+  resolution:
+    width: 1920
+    height: 1080
+  fps: 30
+  format: MJPG  # MJPG, H264, or YUV
+
+buffer:
+  duration_seconds: 45  # rolling buffer length
+
+audio:
+  device_index: null  # null = system default
+  sample_rate: 16000
+  channels: 1
+
+transcription:
+  model: base.en           # tiny.en, base.en, small.en, medium.en
+  device: cpu              # cpu or cuda
+  compute_type: int8       # int8, float16, float32
+
+button:
+  mode: keyboard           # keyboard or gpio
+  key: space               # keyboard key (space, enter, f1, etc.)
+  gpio_pin: 17             # BCM pin for GPIO mode
+  gpio_pull: up            # up or down (pull resistor)
+
+storage:
+  base_path: ./data
+  max_incident_age_days: 90
+
+alpr:
+  enabled: false
+  engine: easyocr          # easyocr, openalpr, platerecognizer
+  confidence_threshold: 0.7
+  scan_interval_seconds: 2
+
+known_vehicles:
+  profiles:
+    - name: Owen black Honda CR-V
+      enabled: true
+      make: Honda
+      model: CR-V
+      color: black
+      vehicle_type: SUV
+      expected_zones:
+        - driveway
+        - home
+      # Add partial plate fragments here if the plate is sometimes visible.
+      # Example: ["ABC", "123"]
+      plate_fragments: []
+      # Require multiple traits so we do not ignore every black SUV.
+      min_score: 0.75
+      min_matched_traits: 3
+
+notifier:
+  chime_enabled: false
+  chime_file: ./data/config/chime.wav
+  console_alerts: true
+
+logging:
+  level: INFO              # DEBUG, INFO, WARNING, ERROR
+  file: ./data/logs/system.log
+  max_bytes: 10485760      # 10 MB
+  backup_count: 3

@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Local/editor files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Runtime data: keep directory placeholders, ignore generated media/db/logs/models
+/data/**/*
+!/data/**/
+!/data/**/.gitkeep
+
+# Logs and temp output
+*.log
+*.tmp
+*.temp
+
+# Secrets / local overrides
+.env
+.env.*
+*.local.yaml
+*.local.yml
+config.local.yaml
