@@ -475,9 +475,9 @@ def alpr_status_api():
     try:
         import easyocr  # noqa: F401
         info["ocr_fallback"] = "available"
-    except ImportError:
+    except ImportError as exc:
         info["ocr_fallback"] = "unavailable"
-        info["ocr_fallback_hint"] = "pip install easyocr"
+        info["ocr_fallback_hint"] = f"easyocr import failed: {exc}; run pip install easyocr in the active venv"
 
     # Check model file
     try:

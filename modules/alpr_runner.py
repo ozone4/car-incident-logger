@@ -334,9 +334,9 @@ class _PaddleOCRRecognizer(_BaseRecognizer):
     def _initialize_easyocr_fallback(self) -> bool:
         try:
             import easyocr  # noqa: PLC0415
-        except ImportError:
+        except ImportError as exc:
             self.fallback_status = "unavailable"
-            self.fallback_error = "easyocr not installed — run: pip install easyocr"
+            self.fallback_error = f"easyocr import failed: {exc} — run: pip install easyocr in the active venv"
             return self.status == "ready"
 
         try:
