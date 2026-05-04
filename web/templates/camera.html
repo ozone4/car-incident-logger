@@ -24,7 +24,11 @@
           onclick="cameraAction('stop')">
     Stop Preview
   </button>
+  <a class="btn" href="{{ url_for('camera_snapshot') }}" target="_blank">Open Snapshot</a>
+  <button class="btn" type="button" onclick="testCurrentFrame()">Test ALPR Frame</button>
 </div>
+
+<pre id="alpr-test-output" class="muted" style="white-space:pre-wrap;margin-top:1rem;"></pre>
 
 <div class="preview-wrapper">
   <img id="preview"
@@ -74,6 +78,19 @@ function cameraAction(action) {
       alert('Request failed: ' + err);
       btnStart.disabled = false;
       btnStop.disabled  = false;
+    });
+}
+
+function testCurrentFrame() {
+  const out = document.getElementById('alpr-test-output');
+  out.textContent = 'Testing current frame...';
+  fetch('/alpr/test-frame')
+    .then(r => r.json())
+    .then(d => {
+      out.textContent = JSON.stringify(d, null, 2);
+    })
+    .catch(err => {
+      out.textContent = 'ALPR frame test failed: ' + err;
     });
 }
 

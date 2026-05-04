@@ -332,6 +332,53 @@ def camera_status_api():
     return jsonify(_camera_status())
 
 
+@app.route("/camera/snapshot")
+def camera_snapshot():
+    """Return one JPEG frame from the active preview camera for diagnostics."""
+    with _camera_lock:
+        cam = _camera
+
+    if cam is None or not cam.is_running:
+        return "Camera is not running", 409
+
+    result = cam.get_frame()
+    if result is None:
+        return "No frame available yet", 503
+
+    frame, _ = result
+    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 92])
+    if not ok:
+        return "Could not encode frame", 500
+
+    return Response(buf.tobytes(), mimetype="image/jpeg")
+
+
+@app.route("/alpr/test-frame")
+def alpr_test_frame_api():
+    """Run ALPR once against the current preview frame and return raw detections."""
+    with _camera_lock:
+        cam = _camera
+
+    if cam is None or not cam.is_running:
+        return jsonify({"ok": False, "error": "Camera is not running"}), 409
+
+    result = cam.get_frame()
+    if result is None:
+        return jsonify({"ok": False, "error": "No frame available yet"}), 503
+
+    runner = ALPRRunner(_alpr_config())
+    ready = runner.initialize()
+    status = runner.status_info()
+    detections = runner.run_on_frame(result[0]) if ready else []
+    return jsonify({
+        "ok": True,
+        "ready": ready,
+        "status": status,
+        "detections": detections,
+        "count": len(detections),
+    })
+
+
 @app.route("/incidents")
 def incidents_page():
     query = request.args.get("q", "").strip()
