@@ -73,6 +73,8 @@ function renderLiveAlpr(d) {
   }
 
   var bits = [];
+  if (plate && plate.raw_text) bits.push('raw OCR: ' + plate.raw_text.trim());
+  if (plate && plate.corrected) bits.push('normalized/corrected');
   if (d.mode) bits.push('mode: ' + d.mode);
   bits.push('frames: ' + (d.frames_scanned || 0));
   bits.push('detections: ' + (d.detections_seen || 0));
