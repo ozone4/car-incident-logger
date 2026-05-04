@@ -55,15 +55,20 @@ def test_capture(device_index: int, num_frames: int = 30) -> bool:
         return False
 
     successes = 0
+    last_shape = None
     for i in range(num_frames):
         ret, frame = cap.read()
         if ret and frame is not None:
             successes += 1
+            last_shape = frame.shape
+
+    if last_shape is not None:
+        h, w = last_shape[:2]
+    else:
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     cap.release()
-
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     print(f"  Captured {successes}/{num_frames} frames  ({w}x{h})")
     if successes == num_frames:
