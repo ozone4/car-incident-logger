@@ -34,6 +34,7 @@ def _build_runner(conf: float, config_path: Optional[str] = None) -> ALPRRunner:
             alpr_cfg = raw.get("alpr", {})
             cfg["yolo_model_path"] = alpr_cfg.get("yolo_model_path", "")
             cfg["models_dir"] = alpr_cfg.get("models_dir", "./data/models")
+            cfg["yolo_confidence_threshold"] = alpr_cfg.get("yolo_confidence_threshold", 0.1)
         except Exception as exc:
             print(f"[warn] Could not read config: {exc}; using defaults")
     return ALPRRunner(cfg)

@@ -147,6 +147,7 @@ def _alpr_config() -> dict:
     cfg = _load_config()
     return {
         "confidence_threshold": cfg.alpr_confidence_threshold,
+        "yolo_confidence_threshold": cfg.alpr_yolo_confidence_threshold,
         "models_dir": cfg.alpr_models_dir,
         "yolo_model_path": cfg.alpr_yolo_model_path,
     }

@@ -406,9 +406,10 @@ class ALPRRunner:
       _BaseDetector / _BaseRecognizer to swap engines without changing this class.
 
     Constructor accepts a config dict with keys:
-      confidence_threshold  float  (default 0.5)
-      models_dir            str    (default ./data/models)
-      yolo_model_path       str    (default <models_dir>/plate_detector.pt)
+      confidence_threshold       float  (default 0.5) final plate confidence
+      yolo_confidence_threshold  float  (default 0.1) detector box threshold
+      models_dir                 str    (default ./data/models)
+      yolo_model_path            str    (default <models_dir>/plate_detector.pt)
     """
 
     def __init__(
@@ -420,13 +421,14 @@ class ALPRRunner:
     ) -> None:
         cfg = config or {}
         self._conf_threshold = float(cfg.get("confidence_threshold", 0.5))
+        self._yolo_conf_threshold = float(cfg.get("yolo_confidence_threshold", 0.1))
         models_dir = Path(cfg.get("models_dir", "./data/models"))
         yolo_path = cfg.get(
             "yolo_model_path", str(models_dir / "plate_detector.pt")
         )
 
         self._detector: _BaseDetector = detector or _YOLODetector(
-            yolo_path, self._conf_threshold
+            yolo_path, self._yolo_conf_threshold
         )
         self._recognizer: _BaseRecognizer = recognizer or _PaddleOCRRecognizer()
         self._ready = False

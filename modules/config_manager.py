@@ -114,6 +114,10 @@ class ConfigManager:
         return float(self.get("alpr", "confidence_threshold", default=0.5))
 
     @property
+    def alpr_yolo_confidence_threshold(self) -> float:
+        return float(self.get("alpr", "yolo_confidence_threshold", default=0.1))
+
+    @property
     def alpr_scan_interval(self) -> float:
         return float(self.get("alpr", "scan_interval_seconds", default=2.0))
 

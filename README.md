@@ -447,7 +447,8 @@ alpr:
 ```yaml
 alpr:
   enabled: true
-  confidence_threshold: 0.5        # lower = more detections, more noise
+  confidence_threshold: 0.5        # final combined plate confidence
+  yolo_confidence_threshold: 0.1   # lower = more OCR attempts, more noise
   scan_interval_seconds: 2
   yolo_model_path: ./data/models/plate_detector.pt
   models_dir: ./data/models
