@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Incidents — Car Incident Logger{% endblock %}
+
+{% block content %}
+<h1>Incidents</h1>
+
+<form class="search-form" method="get" action="{{ url_for('incidents_page') }}">
+  <input type="search" name="q" value="{{ query }}" placeholder="Search plate (e.g. WJ, ABC123)">
+  <button type="submit" class="btn">Search</button>
+  {% if query %}
+    <a href="{{ url_for('incidents_page') }}" class="btn btn-secondary">Clear</a>
+  {% endif %}
+</form>
+
+{% if incidents %}
+<table>
+  <thead>
+    <tr>
+      <th>Plate</th>
+      <th>Time</th>
+      <th>Transcript / Note</th>
+      <th>Confidence</th>
+      <th>Files</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for inc in incidents %}
+    <tr>
+      <td>
+        <a href="{{ url_for('plate_detail', plate=inc.plate) }}">{{ inc.plate }}</a>
+      </td>
+      <td class="mono">{{ fmt_ts(inc.timestamp) }}</td>
+      <td>{{ (inc.meta.get('parsed_note') or inc.meta.get('transcript', '')) | truncate(100) }}</td>
+      <td>
+        {% if inc.meta.get('confidence') is not none %}
+          {{ "%.0f%%"|format(inc.meta.confidence * 100) }}
+        {% else %}—{% endif %}
+      </td>
+      <td class="file-links">
+        {% if inc.meta.get('clip_path') %}
+          <a href="{{ url_for('serve_media', path=inc.meta.clip_path) }}" target="_blank">clip</a>
+        {% endif %}
+        {% if inc.meta.get('audio_path') %}
+          <a href="{{ url_for('serve_media', path=inc.meta.audio_path) }}" target="_blank">audio</a>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% elif query %}
+  <p class="muted">No incidents found matching <strong>{{ query }}</strong>.</p>
+{% else %}
+  <p class="muted">No incidents recorded yet.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Car Incident Logger{% endblock %}
+
+{% block content %}
+<h1>Dashboard</h1>
+
+<div class="status-row">
+  <div class="status-card">
+    <div class="label">Camera</div>
+    {% if camera.running %}
+      <div class="badge badge-green">Running — {{ camera.resolution }} @ {{ camera.fps }} fps (device {{ camera.device_index }})</div>
+    {% else %}
+      <div class="badge badge-grey">Stopped</div>
+    {% endif %}
+    <div class="card-actions">
+      <a href="{{ url_for('camera_page') }}" class="btn">Open Preview</a>
+    </div>
+  </div>
+</div>
+
+<h2>Recent Incidents</h2>
+{% if incidents %}
+<table>
+  <thead>
+    <tr>
+      <th>Plate</th>
+      <th>Time</th>
+      <th>Note</th>
+      <th>Confidence</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for inc in incidents %}
+    <tr>
+      <td>
+        <a href="{{ url_for('plate_detail', plate=inc.plate) }}">
+          {{ inc.plate }}
+        </a>
+      </td>
+      <td class="mono">{{ fmt_ts(inc.timestamp) }}</td>
+      <td>{{ inc.meta.get('parsed_note') or inc.meta.get('transcript', '') | truncate(80) }}</td>
+      <td>
+        {% if inc.meta.get('confidence') is not none %}
+          {{ "%.0f%%"|format(inc.meta.confidence * 100) }}
+        {% else %}—{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p><a href="{{ url_for('incidents_page') }}">View all incidents →</a></p>
+{% else %}
+<p class="muted">No incidents recorded yet. Start the main logger and log an incident to see it here.</p>
+{% endif %}
+{% endblock %}

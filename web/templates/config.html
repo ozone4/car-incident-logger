@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Config — Car Incident Logger{% endblock %}
+
+{% block content %}
+<h1>Configuration</h1>
+
+{% if error %}
+  <div class="alert alert-error">{{ error }}</div>
+{% endif %}
+{% if success %}
+  <div class="alert alert-success">{{ success }}</div>
+{% endif %}
+
+<h2>Editable Settings</h2>
+<p class="muted">
+  These are the key camera and buffer settings. Changes are written to
+  <code>config.yaml</code>. YAML comments will be removed on save.
+  Restart the camera preview (or the main logger) to apply changes.
+</p>
+
+<form method="post" action="{{ url_for('config_page') }}" class="config-form">
+  <label>
+    Camera device index
+    <input type="number" name="device_index" min="0" max="99"
+           value="{{ config.get('device_index', 0) }}" required>
+    <span class="hint">0 = first USB camera; try 1, 2 if wrong device opens</span>
+  </label>
+
+  <label>
+    Resolution width (px)
+    <input type="number" name="width" min="160" max="7680"
+           value="{{ config.get('width', 1920) }}" required>
+  </label>
+
+  <label>
+    Resolution height (px)
+    <input type="number" name="height" min="120" max="4320"
+           value="{{ config.get('height', 1080) }}" required>
+  </label>
+
+  <label>
+    FPS
+    <input type="number" name="fps" min="1" max="120"
+           value="{{ config.get('fps', 30) }}" required>
+  </label>
+
+  <label>
+    Rolling buffer duration (seconds)
+    <input type="number" name="buffer_duration" min="5" max="300"
+           value="{{ config.get('buffer_duration', 45) }}" required>
+    <span class="hint">How many seconds of video to keep before an incident trigger</span>
+  </label>
+
+  <button type="submit" class="btn">Save</button>
+</form>
+
+{% if config %}
+<h2>Read-only Settings</h2>
+<table class="config-table">
+  <tr><th>camera.format</th><td><code>{{ config.get('format') }}</code></td></tr>
+  <tr><th>transcription.model</th><td><code>{{ config.get('transcription_model') }}</code></td></tr>
+  <tr><th>button.mode</th><td><code>{{ config.get('button_mode') }}</code></td>
+  </tr>
+  <tr><th>button.key</th><td><code>{{ config.get('button_key') }}</code></td></tr>
+  <tr><th>storage.base_path</th><td><code>{{ config.get('storage_base_path') }}</code></td></tr>
+</table>
+<p class="muted">Edit <code>config.yaml</code> directly to change these settings.</p>
+{% endif %}
+{% endblock %}

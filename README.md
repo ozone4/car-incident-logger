@@ -320,6 +320,60 @@ car-incident-logger/
 
 ---
 
+## Web UI
+
+A lightweight Flask dashboard lets you preview the camera and browse incidents without running the full logger loop.
+
+### Start the web UI (Windows / macOS / Linux)
+
+```powershell
+# From the project root (Windows PowerShell or Command Prompt):
+pip install -r requirements.txt
+python web/app.py
+```
+
+```bash
+# macOS / Linux:
+pip install -r requirements.txt
+python3 web/app.py
+```
+
+Then open **http://127.0.0.1:5000/** in a browser.
+
+### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--host` | `127.0.0.1` | Bind address. Use `0.0.0.0` to expose on your LAN |
+| `--port` | `5000` | TCP port |
+| `--debug` | off | Enable Flask debug/reloader |
+
+```powershell
+# Example: expose on LAN at port 8080
+python web/app.py --host 0.0.0.0 --port 8080
+```
+
+### Pages
+
+| URL | Description |
+|-----|-------------|
+| `/` | Dashboard — camera status + 10 most recent incidents |
+| `/camera` | Live MJPEG camera preview with start/stop controls |
+| `/incidents` | All incidents; search by partial plate (e.g. `WJ`) |
+| `/incidents/<PLATE>` | Per-plate incident history |
+| `/config` | View and edit camera device, resolution, FPS, buffer duration |
+
+The camera preview on `/camera` is independent of the main logger — you can start/stop it to test your camera without running `main.py`.
+
+### Windows notes
+
+- Tested with Python 3.10+ on Windows 10/11.
+- No external services required — everything runs locally.
+- Use `python` on your Windows PC; the `py` launcher may not be installed.
+- Camera device index: plug in your USB camera, start the web UI, go to `/camera`, and click **Start Preview**. If the wrong camera opens, edit `camera.device_index` on the `/config` page.
+
+---
+
 ## Phase 2 Roadmap
 
 Phase 2 adds **automatic** license plate recognition on live video — no button required for detection (button logging still works in parallel).

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Car Incident Logger{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<nav class="sidebar">
+  <div class="brand">Incident<br>Logger</div>
+  <ul>
+    <li>
+      <a href="{{ url_for('index') }}"
+         {% if request.endpoint == 'index' %}class="active"{% endif %}>
+        Dashboard
+      </a>
+    </li>
+    <li>
+      <a href="{{ url_for('camera_page') }}"
+         {% if request.endpoint == 'camera_page' %}class="active"{% endif %}>
+        Camera
+      </a>
+    </li>
+    <li>
+      <a href="{{ url_for('incidents_page') }}"
+         {% if request.endpoint in ('incidents_page', 'plate_detail') %}class="active"{% endif %}>
+        Incidents
+      </a>
+    </li>
+    <li>
+      <a href="{{ url_for('config_page') }}"
+         {% if request.endpoint == 'config_page' %}class="active"{% endif %}>
+        Config
+      </a>
+    </li>
+  </ul>
+</nav>
+<main class="content">
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

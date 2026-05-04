@@ -19,6 +19,9 @@ pyyaml>=6.0
 # Keyboard button listener
 pynput>=1.7.6
 
+# Web UI
+flask>=3.0
+
 # ── Optional ──────────────────────────────────────────────────────────────────
 # Alert chime playback (only needed if notifier.chime_enabled = true)
 # playsound>=1.3.0

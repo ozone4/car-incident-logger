@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Camera Preview — Car Incident Logger{% endblock %}
+
+{% block content %}
+<h1>Camera Preview</h1>
+
+<div class="status-row">
+  <span id="status-badge" class="badge {% if camera.running %}badge-green{% else %}badge-grey{% endif %}">
+    {% if camera.running %}Running{% else %}Stopped{% endif %}
+  </span>
+  <span id="resolution-info" class="muted" style="margin-left:1rem;">
+    {% if camera.running %}{{ camera.resolution }} @ {{ camera.fps }} fps — device {{ camera.device_index }}{% endif %}
+  </span>
+</div>
+
+<div class="camera-controls">
+  <button id="btn-start" class="btn"
+          {% if camera.running %}disabled{% endif %}
+          onclick="cameraAction('start')">
+    Start Preview
+  </button>
+  <button id="btn-stop" class="btn btn-danger"
+          {% if not camera.running %}disabled{% endif %}
+          onclick="cameraAction('stop')">
+    Stop Preview
+  </button>
+</div>
+
+<div class="preview-wrapper">
+  <img id="preview"
+       src="{% if camera.running %}{{ url_for('camera_stream') }}{% else %}{% endif %}"
+       alt="Camera preview"
+       class="preview-img {% if not camera.running %}hidden{% endif %}"
+  >
+  <div id="preview-placeholder" class="preview-placeholder {% if camera.running %}hidden{% endif %}">
+    Camera stopped — click <strong>Start Preview</strong> to begin.
+  </div>
+</div>
+
+<p class="muted" style="margin-top:1rem;">
+  The preview here is independent of the main logger. Starting or stopping it does
+  not affect incident recording.
+</p>
+
+<script>
+function cameraAction(action) {
+  const btnStart = document.getElementById('btn-start');
+  const btnStop  = document.getElementById('btn-stop');
+  btnStart.disabled = true;
+  btnStop.disabled  = true;
+
+  fetch('/camera/' + action, { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      const running = (data.status === 'started' || data.status === 'already_running');
+      updateUI(running);
+      // Refresh status to pick up resolution info.
+      return fetch('/camera/status').then(r => r.json());
+    })
+    .then(status => {
+      const badge = document.getElementById('status-badge');
+      const info  = document.getElementById('resolution-info');
+      if (status.running) {
+        badge.textContent = 'Running';
+        badge.className   = 'badge badge-green';
+        info.textContent  = status.resolution + ' @ ' + status.fps + ' fps — device ' + status.device_index;
+      } else {
+        badge.textContent = 'Stopped';
+        badge.className   = 'badge badge-grey';
+        info.textContent  = '';
+      }
+    })
+    .catch(err => {
+      alert('Request failed: ' + err);
+      btnStart.disabled = false;
+      btnStop.disabled  = false;
+    });
+}
+
+function updateUI(running) {
+  const preview     = document.getElementById('preview');
+  const placeholder = document.getElementById('preview-placeholder');
+  const btnStart    = document.getElementById('btn-start');
+  const btnStop     = document.getElementById('btn-stop');
+
+  if (running) {
+    preview.src = '/camera/stream?' + Date.now();  // bust cache
+    preview.classList.remove('hidden');
+    placeholder.classList.add('hidden');
+    btnStart.disabled = true;
+    btnStop.disabled  = false;
+  } else {
+    preview.src = '';
+    preview.classList.add('hidden');
+    placeholder.classList.remove('hidden');
+    btnStart.disabled = false;
+    btnStop.disabled  = true;
+  }
+}
+</script>
+{% endblock %}
