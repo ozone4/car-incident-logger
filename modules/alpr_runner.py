@@ -353,21 +353,25 @@ class _PaddleOCRRecognizer(_BaseRecognizer):
 # ---------------------------------------------------------------------------
 
 def _preprocess_crop(
-    frame: np.ndarray, x1: int, y1: int, x2: int, y2: int
+    frame: np.ndarray, x1: int, y1: int, x2: int, y2: int, pad_ratio: float = 0.08
 ) -> np.ndarray:
-    """Crop a plate region with small padding, upscale if too small for OCR."""
+    """Crop a plate region with padding, upscale if too small for OCR."""
     h, w = frame.shape[:2]
-    x1 = max(0, x1 - 5)
-    y1 = max(0, y1 - 5)
-    x2 = min(w, x2 + 5)
-    y2 = min(h, y2 + 5)
+    bw = max(1, x2 - x1)
+    bh = max(1, y2 - y1)
+    pad_x = max(5, int(bw * pad_ratio))
+    pad_y = max(5, int(bh * pad_ratio))
+    x1 = max(0, x1 - pad_x)
+    y1 = max(0, y1 - pad_y)
+    x2 = min(w, x2 + pad_x)
+    y2 = min(h, y2 + pad_y)
     crop = frame[y1:y2, x1:x2]
 
     ch, cw = crop.shape[:2]
-    if cw < 200 and cw > 0:
+    if cw < 320 and cw > 0:
         try:
             import cv2  # noqa: PLC0415
-            scale = 200 / cw
+            scale = 320 / cw
             interp = getattr(cv2, "INTER_CUBIC", 2)  # 2 is the cv2.INTER_CUBIC int value
             crop = cv2.resize(
                 crop,
@@ -378,6 +382,27 @@ def _preprocess_crop(
             pass  # cv2 missing or mocked — return crop as-is
 
     return crop
+
+
+def _ocr_crop_variants(crop: np.ndarray) -> list[np.ndarray]:
+    """Return original + enhanced crop variants for OCR robustness."""
+    variants = [crop]
+    try:
+        import cv2  # noqa: PLC0415
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if len(crop.shape) == 3 else crop
+        variants.append(gray)
+        variants.append(cv2.convertScaleAbs(gray, alpha=1.6, beta=8))
+        variants.append(cv2.adaptiveThreshold(
+            gray,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            31,
+            5,
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+    return variants
 
 
 def _normalize_and_correct(raw: str) -> tuple[str, bool]:
@@ -506,13 +531,26 @@ class ALPRRunner:
             for box in boxes:
                 x1, y1, x2, y2 = box["bbox"]
                 det_conf = box["confidence"]
-                crop = _preprocess_crop(frame, x1, y1, x2, y2)
-                texts = self._recognizer.recognize(crop)
+                crop = _preprocess_crop(frame, x1, y1, x2, y2, pad_ratio=0.18)
+                texts: list[tuple[str, float]] = []
+                for idx, variant in enumerate(_ocr_crop_variants(crop)):
+                    texts = self._recognizer.recognize(variant)
+                    if texts:
+                        self.last_debug_candidates.append({
+                            "stage": "ocr_variant_used",
+                            "bbox": box["bbox"],
+                            "variant": idx,
+                            "texts": [{"text": t, "confidence": round(float(c), 3)} for t, c in texts],
+                        })
+                        break
                 if not texts:
+                    ch, cw = crop.shape[:2]
                     self.last_debug_candidates.append({
                         "stage": "ocr_empty",
                         "bbox": box["bbox"],
                         "detector_confidence": round(det_conf, 3),
+                        "crop_size": [int(cw), int(ch)],
+                        "variants_tried": len(_ocr_crop_variants(crop)),
                         "reason": "OCR returned no text for this crop",
                     })
                 for raw_text, ocr_conf in texts:
