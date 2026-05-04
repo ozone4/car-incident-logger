@@ -472,6 +472,13 @@ def alpr_status_api():
         info["ocr"] = "unavailable"
         info["ocr_hint"] = "pip install paddlepaddle paddleocr"
 
+    try:
+        import easyocr  # noqa: F401
+        info["ocr_fallback"] = "available"
+    except ImportError:
+        info["ocr_fallback"] = "unavailable"
+        info["ocr_fallback_hint"] = "pip install easyocr"
+
     # Check model file
     try:
         cfg = _load_config()

@@ -419,6 +419,7 @@ pip install -r requirements-alpr.txt
 # Or individually:
 pip install ultralytics              # YOLO detector
 pip install paddlepaddle paddleocr   # OCR (CPU)
+pip install easyocr                  # optional cropped-plate OCR fallback
 ```
 
 **Windows note:** If `pip install paddlepaddle` says "No matching distribution found", check your Python version first:
@@ -426,6 +427,11 @@ pip install paddlepaddle paddleocr   # OCR (CPU)
 python --version
 ```
 If it says Python 3.14, create a Python 3.11/3.12 virtual environment and install ALPR there. PaddlePaddle wheels commonly lag behind the newest Python releases.
+
+If PaddleOCR initializes but returns no text for good YOLO plate crops, install the optional cropped-plate fallback:
+```powershell
+pip install easyocr
+```
 
 ### Get a plate detector model
 

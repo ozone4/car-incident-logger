@@ -22,6 +22,10 @@ ultralytics>=8.0.0
 paddlepaddle>=2.6.0
 paddleocr>=2.7.0
 
+# Optional fallback OCR for cropped plates when PaddleOCR returns no text.
+# This is NOT used as full-frame OCR; it only reads YOLO plate crops.
+easyocr>=1.7.0
+
 # GPU (CUDA 11.x — uncomment and comment out the CPU line above):
 # paddlepaddle-gpu>=2.6.0
 #

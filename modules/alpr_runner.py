@@ -286,12 +286,15 @@ class _YOLODetector(_BaseDetector):
 
 
 class _PaddleOCRRecognizer(_BaseRecognizer):
-    """PaddleOCR text recognizer (optional)."""
+    """PaddleOCR text recognizer with optional EasyOCR fallback for crops."""
 
     def __init__(self) -> None:
         self._ocr: Any = None
+        self._easyocr: Any = None
         self.status = "uninitialized"
         self.error: str | None = None
+        self.fallback_status = "uninitialized"
+        self.fallback_error: str | None = None
 
     def initialize(self) -> bool:
         try:
@@ -318,13 +321,32 @@ class _PaddleOCRRecognizer(_BaseRecognizer):
             try:
                 self._ocr = PaddleOCR(**kwargs)
                 self.status = "ready"
+                self._initialize_easyocr_fallback()
                 return True
             except Exception as exc:  # noqa: BLE001
                 errors.append(str(exc))
 
         self.status = "error"
         self.error = errors[-1] if errors else "PaddleOCR initialization failed"
-        return False
+        return self._initialize_easyocr_fallback()
+
+    def _initialize_easyocr_fallback(self) -> bool:
+        try:
+            import easyocr  # noqa: PLC0415
+        except ImportError:
+            self.fallback_status = "unavailable"
+            self.fallback_error = "easyocr not installed — run: pip install easyocr"
+            return self.status == "ready"
+
+        try:
+            self._easyocr = easyocr.Reader(["en"], gpu=False, verbose=False)
+            self.fallback_status = "ready"
+            self.fallback_error = None
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self.fallback_status = "error"
+            self.fallback_error = str(exc)
+            return self.status == "ready"
 
     def recognize(self, image: np.ndarray) -> list[tuple[str, float]]:
         if self._ocr is None:
@@ -345,6 +367,18 @@ class _PaddleOCRRecognizer(_BaseRecognizer):
 
         if last_error:
             logger.warning("PaddleOCR recognition failed: %s", last_error)
+
+        if self._easyocr is not None:
+            try:
+                easy_results = self._easyocr.readtext(image, detail=1, paragraph=False)
+                texts: list[tuple[str, float]] = []
+                for item in easy_results:
+                    if isinstance(item, (list, tuple)) and len(item) >= 3:
+                        texts.append((str(item[1]), float(item[2])))
+                if texts:
+                    return texts
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("EasyOCR fallback failed: %s", exc)
         return []
 
 
@@ -473,6 +507,8 @@ class ALPRRunner:
             "detector_error": self._detector.error,
             "ocr": self._recognizer.status,
             "ocr_error": self._recognizer.error,
+            "ocr_fallback": getattr(self._recognizer, "fallback_status", None),
+            "ocr_fallback_error": getattr(self._recognizer, "fallback_error", None),
         }
 
         if not det_ok:
