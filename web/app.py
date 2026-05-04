@@ -68,8 +68,14 @@ _alpr_state: dict = {
     "detections_seen": 0,
     "latest": None,
     "best": None,
+    "active_sightings": {},
+    "recent_sightings": [],
+    "sightings": [],
     "error": None,
 }
+
+SIGHTING_ACTIVE_TIMEOUT_SECONDS = 5.0
+SIGHTING_HISTORY_LIMIT = 30
 
 
 # ── Config helpers ────────────────────────────────────────────────────────────
@@ -159,6 +165,95 @@ def _set_alpr_state(**updates) -> None:
         _alpr_state["updated_at"] = time.time()
 
 
+def _format_elapsed(seconds: float) -> str:
+    if seconds < 1:
+        return "now"
+    if seconds < 60:
+        return f"{int(seconds)}s ago"
+    return f"{int(seconds // 60)}m ago"
+
+
+def _new_sighting(plate: str, det: dict, now: float) -> dict:
+    return {
+        "id": f"{plate}-{int(now * 1000)}",
+        "plate": plate,
+        "raw_text": (det.get("raw_text") or "").strip(),
+        "confidence": float(det.get("confidence", 0.0)),
+        "best_confidence": float(det.get("confidence", 0.0)),
+        "bbox": det.get("bbox"),
+        "source": det.get("source"),
+        "first_seen": now,
+        "last_seen": now,
+        "seen_count": 1,
+        "active": True,
+    }
+
+
+def _serialize_sighting(sighting: dict, now: float) -> dict:
+    first_seen = float(sighting.get("first_seen", now))
+    last_seen = float(sighting.get("last_seen", now))
+    active = bool(sighting.get("active", False))
+    return {
+        "id": sighting.get("id"),
+        "plate": sighting.get("plate"),
+        "raw_text": sighting.get("raw_text"),
+        "confidence": round(float(sighting.get("confidence", 0.0)), 3),
+        "best_confidence": round(float(sighting.get("best_confidence", 0.0)), 3),
+        "bbox": sighting.get("bbox"),
+        "source": sighting.get("source"),
+        "first_seen": first_seen,
+        "last_seen": last_seen,
+        "seen_count": int(sighting.get("seen_count", 0)),
+        "active": active,
+        "status": "visible" if active else "gone",
+        "age_seconds": round(now - first_seen, 1),
+        "last_seen_seconds_ago": round(now - last_seen, 1),
+        "last_seen_label": _format_elapsed(now - last_seen),
+    }
+
+
+def _update_plate_sightings(detections: list[dict], now: float) -> tuple[dict, list[dict], list[dict]]:
+    """Update active/recent plate sightings and return serialized display rows."""
+    active: dict = _alpr_state.setdefault("active_sightings", {})
+    recent: list = _alpr_state.setdefault("recent_sightings", [])
+
+    for det in detections:
+        plate = det.get("plate")
+        if not plate:
+            continue
+        sighting = active.get(plate)
+        if sighting is None:
+            sighting = _new_sighting(plate, det, now)
+            active[plate] = sighting
+        else:
+            sighting["last_seen"] = now
+            sighting["seen_count"] = int(sighting.get("seen_count", 0)) + 1
+            sighting["confidence"] = float(det.get("confidence", sighting.get("confidence", 0.0)))
+            sighting["best_confidence"] = max(
+                float(sighting.get("best_confidence", 0.0)),
+                float(det.get("confidence", 0.0)),
+            )
+            sighting["raw_text"] = (det.get("raw_text") or sighting.get("raw_text") or "").strip()
+            sighting["bbox"] = det.get("bbox") or sighting.get("bbox")
+            sighting["source"] = det.get("source") or sighting.get("source")
+            sighting["active"] = True
+
+    expired = []
+    for plate, sighting in list(active.items()):
+        if now - float(sighting.get("last_seen", now)) > SIGHTING_ACTIVE_TIMEOUT_SECONDS:
+            sighting["active"] = False
+            expired.append(active.pop(plate))
+
+    if expired:
+        recent[:0] = expired
+        del recent[SIGHTING_HISTORY_LIMIT:]
+
+    active_rows = sorted(active.values(), key=lambda x: x.get("last_seen", 0), reverse=True)
+    history_rows = active_rows + recent[:SIGHTING_HISTORY_LIMIT]
+    serialized = [_serialize_sighting(row, now) for row in history_rows]
+    return active, recent, serialized
+
+
 def _live_alpr_loop() -> None:
     """Background scanner: sample latest preview frame, run ALPR, vote over time."""
     runner = ALPRRunner(_alpr_config())
@@ -173,6 +268,9 @@ def _live_alpr_loop() -> None:
         detections_seen=0,
         latest=None,
         best=None,
+        active_sightings={},
+        recent_sightings=[],
+        sightings=[],
         error=None if ready else "ALPR engines are not ready",
     )
 
@@ -205,12 +303,15 @@ def _live_alpr_loop() -> None:
         best = voter.get_best()
 
         with _alpr_lock:
+            now = time.time()
+            _active, _recent, sightings = _update_plate_sightings(detections, now)
             _alpr_state["frames_scanned"] = int(_alpr_state.get("frames_scanned", 0)) + 1
             _alpr_state["detections_seen"] = int(_alpr_state.get("detections_seen", 0)) + len(detections)
             _alpr_state["latest"] = latest
             _alpr_state["best"] = best
+            _alpr_state["sightings"] = sightings
             _alpr_state["error"] = None
-            _alpr_state["updated_at"] = time.time()
+            _alpr_state["updated_at"] = now
 
         _alpr_stop_event.wait(scan_interval)
 
@@ -236,6 +337,9 @@ def _start_live_alpr() -> dict:
         detections_seen=0,
         latest=None,
         best=None,
+        active_sightings={},
+        recent_sightings=[],
+        sightings=[],
         error="Initializing ALPR engines",
     )
     _alpr_thread = threading.Thread(target=_live_alpr_loop, daemon=True, name="LiveALPR")
@@ -254,6 +358,9 @@ def _stop_live_alpr() -> dict:
 
 def _get_live_alpr_status() -> dict:
     with _alpr_lock:
+        now = time.time()
+        _active, _recent, sightings = _update_plate_sightings([], now)
+        _alpr_state["sightings"] = sightings
         return dict(_alpr_state)
 
 

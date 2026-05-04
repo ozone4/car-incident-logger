@@ -33,6 +33,10 @@
   <div id="live-alpr-status" class="badge badge-grey">Stopped</div>
   <div id="live-alpr-best" style="font-size:1.5em;font-weight:700;margin-top:8px">No plate yet</div>
   <div id="live-alpr-detail" style="font-size:0.9em;color:#888;margin-top:4px">Start the camera preview, then start Live ALPR.</div>
+  <div class="plate-log" style="margin-top:12px;width:100%">
+    <div class="label">Plate sightings</div>
+    <div id="plate-sightings" class="sightings-list muted">No sightings yet.</div>
+  </div>
 </div>
 
 <script>
@@ -56,10 +60,17 @@ fetch('/alpr/status').then(r=>r.json()).then(d=>{
   document.getElementById('alpr-badge').textContent = 'Unavailable';
 });
 
+function escapeHtml(value) {
+  return String(value || '').replace(/[&<>"']/g, function(ch) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+  });
+}
+
 function renderLiveAlpr(d) {
   var status = document.getElementById('live-alpr-status');
   var best = document.getElementById('live-alpr-best');
   var detail = document.getElementById('live-alpr-detail');
+  var sightings = document.getElementById('plate-sightings');
 
   status.textContent = d.running ? 'Scanning' : 'Stopped';
   status.className = d.running ? 'badge badge-green' : 'badge badge-grey';
@@ -80,6 +91,24 @@ function renderLiveAlpr(d) {
   bits.push('detections: ' + (d.detections_seen || 0));
   if (d.error) bits.push(d.error);
   detail.textContent = bits.join(' · ');
+
+  var rows = d.sightings || [];
+  if (!rows.length) {
+    sightings.className = 'sightings-list muted';
+    sightings.textContent = 'No sightings yet.';
+  } else {
+    sightings.className = 'sightings-list';
+    sightings.innerHTML = rows.slice(0, 12).map(function(row){
+      var conf = row.best_confidence ? Math.round(row.best_confidence * 100) + '%' : 'n/a';
+      var raw = row.raw_text ? 'raw ' + escapeHtml(row.raw_text) : '';
+      var status = row.active ? 'visible' : 'gone ' + escapeHtml(row.last_seen_label || '');
+      var statusClass = row.active ? 'badge badge-green' : 'badge badge-grey';
+      return '<div class="sighting-row">' +
+        '<div><strong class="mono">' + escapeHtml(row.plate) + '</strong> <span class="' + statusClass + '">' + status + '</span></div>' +
+        '<div class="muted">best ' + conf + ' · seen ' + (row.seen_count || 0) + '×' + (raw ? ' · ' + raw : '') + '</div>' +
+      '</div>';
+    }).join('');
+  }
 }
 
 function refreshLiveAlpr() {

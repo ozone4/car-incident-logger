@@ -187,3 +187,31 @@ def test_alpr_live_stop_when_not_running(client):
     data = resp.get_json()
     assert data["status"] == "stopped"
     assert data["running"] is False
+
+# ── Plate sightings log tests ────────────────────────────────────────────────
+
+def test_plate_sightings_track_multiple_active_plates():
+    from web.app import _alpr_state, _update_plate_sightings
+
+    _alpr_state["active_sightings"] = {}
+    _alpr_state["recent_sightings"] = []
+    _, _, rows = _update_plate_sightings([
+        {"plate": "634XSG", "confidence": 0.53, "raw_text": "634-XSG"},
+        {"plate": "ABC123", "confidence": 0.61, "raw_text": "ABC123"},
+    ], 100.0)
+
+    assert [r["plate"] for r in rows] == ["634XSG", "ABC123"]
+    assert all(r["active"] for r in rows)
+
+
+def test_plate_sightings_expire_to_recent_history():
+    from web.app import _alpr_state, _update_plate_sightings
+
+    _alpr_state["active_sightings"] = {}
+    _alpr_state["recent_sightings"] = []
+    _update_plate_sightings([{"plate": "634XSG", "confidence": 0.53}], 100.0)
+    _, _, rows = _update_plate_sightings([], 106.0)
+
+    assert rows[0]["plate"] == "634XSG"
+    assert rows[0]["active"] is False
+    assert rows[0]["status"] == "gone"
