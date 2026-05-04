@@ -1,0 +1,34 @@
+# requirements-alpr.txt — Optional ALPR dependencies
+#
+# The base logger (main.py, web UI, tests) works without any of these.
+# Install only what you need:
+#
+#   pip install -r requirements-alpr.txt      # everything below
+#   pip install ultralytics                    # YOLO detector only
+#   pip install paddlepaddle paddleocr         # PaddleOCR only (CPU)
+#
+# ── Plate detector ────────────────────────────────────────────────────────────
+# YOLO via ultralytics — detects plate bounding boxes in each frame.
+# After install, download a plate-specific model and set alpr.yolo_model_path
+# in config.yaml.  A general YOLOv8n will detect vehicles but not plates;
+# a fine-tuned plate detector gives much better results.
+ultralytics>=8.0.0
+
+# ── OCR engine ────────────────────────────────────────────────────────────────
+# PaddleOCR — reads text from cropped plate regions.
+# PaddlePaddle (the framework) must be installed first.
+#
+# CPU (all platforms):
+paddlepaddle>=2.6.0
+paddleocr>=2.7.0
+
+# GPU (CUDA 11.x — uncomment and comment out the CPU line above):
+# paddlepaddle-gpu>=2.6.0
+#
+# Windows note: if pip install paddlepaddle fails, try:
+#   pip install paddlepaddle -f https://www.paddlepaddle.org.cn/whl/windows/mkl/avx/stable.html
+# Or use the CPU wheel from the PaddlePaddle release page.
+
+# ── Image utilities ───────────────────────────────────────────────────────────
+# Pillow is often already installed; listed here for completeness.
+Pillow>=9.0.0

@@ -281,6 +281,9 @@ Tests cover:
 - Edge cases (niner, oh, bare digits, mixed case, x-ray)
 - Note separation from plate tokens
 - Database add/retrieve/search/delete operations
+- ALPR normalization, OCR corrections, plate validation
+- Multi-frame voting logic
+- ALPRRunner behavior when deps are missing (no ultralytics/PaddleOCR needed)
 
 ---
 
@@ -302,8 +305,9 @@ car-incident-logger/
 │   ├── incident_saver.py        # Saves clip + audio + metadata to disk
 │   ├── plate_database.py        # SQLite plates/incidents/sightings
 │   ├── notifier.py              # Console + chime alerts
-│   ├── alpr_runner.py           # STUB: Phase 2 live ALPR
-│   └── live_matcher.py          # STUB: Phase 2 known-plate matching
+│   ├── alpr_runner.py           # Phase 2: YOLO+PaddleOCR pipeline (deps optional)
+│   ├── multi_frame_voter.py     # Phase 2: aggregate candidates across frames
+│   └── live_matcher.py          # Phase 2 stub: background known-plate alerting
 ├── data/
 │   ├── plates/                  # Per-plate incident folders
 │   ├── unresolved/              # Incidents with no parsed plate
@@ -312,10 +316,15 @@ car-incident-logger/
 │   └── plates.db                # SQLite database (after first run)
 ├── scripts/
 │   ├── install_deps.sh          # One-shot setup script
-│   └── setup_db.py              # DB schema init
+│   ├── setup_db.py              # DB schema init
+│   └── test_alpr.py             # ALPR pipeline test (--image / --camera / --status)
+├── requirements.txt             # Core deps (no heavy ALPR libs)
+├── requirements-alpr.txt        # Optional ALPR deps (ultralytics, paddleocr)
 └── tests/
     ├── test_phonetic_parser.py
-    └── test_plate_database.py
+    ├── test_plate_database.py
+    ├── test_web_ui.py
+    └── test_alpr.py             # ALPR utils + voter tests (no heavy deps needed)
 ```
 
 ---
@@ -374,37 +383,98 @@ The camera preview on `/camera` is independent of the main logger — you can st
 
 ---
 
-## Phase 2 Roadmap
+## Phase 2 — ALPR (Automatic License Plate Recognition)
 
-Phase 2 adds **automatic** license plate recognition on live video — no button required for detection (button logging still works in parallel).
+Phase 2 adds **automatic** plate recognition on live video — no button required for detection. Button logging continues to work alongside it.
 
-Planned additions:
+### Architecture
 
-1. **`modules/alpr_runner.py`** — implement `run_on_frame()` using one of:
-   - EasyOCR + YOLOv8-nano plate detector (fully offline, permissive licence)
-   - OpenALPR C++ library with Python bindings (mature, GPL)
-   - Plate Recognizer Local SDK (paid, highest accuracy)
+```
+frame → YOLO plate detector → crop + preprocess → PaddleOCR → normalize/correct → validate
+                                                                         ↓
+                                              MultiFrameVoter aggregates across frames
+                                                                         ↓
+                                                    best plate + confidence returned
+```
 
-2. **`modules/live_matcher.py`** — background thread samples frames every N seconds,
-   calls ALPR, compares results to `plate_database`, fires `notifier.alert_known_plate()`
-   on a match.
+OCR correction rules handle common confusions for BC/North-American plates:
+`O↔0  I↔1  S↔5  B↔8  Z↔2  G↔6` applied based on letter vs digit position in the plate.
 
-3. **Incident auto-tagging** — when ALPR matches a plate during a button-triggered
-   incident, automatically tag the metadata with `"alpr_confirmed": true`.
+### Install ALPR dependencies
 
-4. **Retention policy** — scheduled cleanup of incidents older than
-   `storage.max_incident_age_days`.
+```bash
+# All ALPR deps:
+pip install -r requirements-alpr.txt
 
-5. **Web UI** — lightweight Flask/FastAPI dashboard to browse incidents and plates.
+# Or individually:
+pip install ultralytics              # YOLO detector
+pip install paddlepaddle paddleocr   # OCR (CPU)
+```
 
-Enable Phase 2 ALPR once implemented:
+**Windows note:** If `pip install paddlepaddle` fails, install the wheel manually:
+```powershell
+pip install paddlepaddle -f https://www.paddlepaddle.org.cn/whl/windows/mkl/avx/stable.html
+```
+Then `pip install paddleocr`.
+
+### Get a plate detector model
+
+Quality ALPR requires a YOLO model fine-tuned on license plates. A general YOLOv8n (vehicle/object detector) will not find plate bounding boxes reliably.
+
+Options:
+- **Roboflow Universe** — search "license plate detection", download YOLOv8 `.pt` weights (free for research use)
+- **keremberke/license-plate-object-detection** — available on Hugging Face Hub
+- Train your own on local footage with [Roboflow](https://roboflow.com/) or CVAT
+
+Place the `.pt` file anywhere and set the path in `config.yaml`:
+```yaml
+alpr:
+  yolo_model_path: ./data/models/plate_detector.pt
+```
+
+### Enable ALPR
+
 ```yaml
 alpr:
   enabled: true
-  engine: easyocr
-  confidence_threshold: 0.7
+  confidence_threshold: 0.5        # lower = more detections, more noise
   scan_interval_seconds: 2
+  yolo_model_path: ./data/models/plate_detector.pt
+  models_dir: ./data/models
 ```
+
+### Test the ALPR pipeline (without running the full logger)
+
+```bash
+# Check which engines are installed:
+python scripts/test_alpr.py --status
+
+# Run on a single image:
+python scripts/test_alpr.py --image path/to/plate.jpg
+
+# Run on live camera, aggregate 60 frames:
+python scripts/test_alpr.py --camera --frames 60 --conf 0.4
+```
+
+Windows PowerShell:
+```powershell
+python scripts/test_alpr.py --status
+python scripts/test_alpr.py --image plate.jpg
+python scripts/test_alpr.py --camera --frames 30
+```
+
+### Limitations
+
+- **Model quality is the bottleneck.** A fine-tuned plate detector is essential; without one ALPR will miss most plates in real traffic.
+- PaddleOCR can struggle with motion blur and low-light plates — good camera placement helps more than model tweaking.
+- Whole-frame OCR fallback (no YOLO) produces many false positives and is not suitable for moving vehicles.
+- `live_matcher.py` (background alert on known plates) is still a stub pending real-world tuning.
+
+### Planned additions
+
+- Incident auto-tagging: when ALPR confirms a plate during a button-triggered incident, add `"alpr_confirmed": true` to metadata.
+- Retention policy: auto-delete incidents older than `storage.max_incident_age_days`.
+- Web UI ALPR page: browsable sightings separate from button-triggered incidents.
 
 ---
 

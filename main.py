@@ -265,9 +265,11 @@ def main() -> int:
 
     # ── Optional ALPR init ────────────────────────────────────────────────────
     alpr = ALPRRunner(
-        engine=config.alpr_engine,
-        confidence_threshold=config.alpr_confidence_threshold,
-        models_dir=str(base / "models"),
+        {
+            "confidence_threshold": config.alpr_confidence_threshold,
+            "models_dir": config.alpr_models_dir,
+            "yolo_model_path": config.alpr_yolo_model_path,
+        }
     )
     live_matcher = LiveMatcher(
         alpr_runner=alpr,

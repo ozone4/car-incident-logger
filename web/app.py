@@ -263,6 +263,45 @@ def serve_media():
     return send_file(str(candidate))
 
 
+@app.route("/alpr/status")
+def alpr_status_api():
+    """Return JSON describing ALPR engine availability without initializing engines."""
+    info: dict = {}
+
+    # Check ultralytics (YOLO detector)
+    try:
+        import ultralytics  # noqa: F401
+        info["detector"] = "available"
+    except ImportError:
+        info["detector"] = "unavailable"
+        info["detector_hint"] = "pip install ultralytics"
+
+    # Check paddleocr
+    try:
+        import paddleocr  # noqa: F401
+        info["ocr"] = "available"
+    except ImportError:
+        info["ocr"] = "unavailable"
+        info["ocr_hint"] = "pip install paddlepaddle paddleocr"
+
+    # Check model file
+    try:
+        cfg = _load_config()
+        model_path = cfg.alpr_yolo_model_path
+        info["model_path"] = model_path
+        info["model_exists"] = Path(model_path).exists()
+        info["alpr_enabled"] = cfg.alpr_enabled
+    except Exception:
+        info["alpr_enabled"] = False
+
+    info["ready"] = (
+        info.get("detector") == "available"
+        and info.get("ocr") == "available"
+        and info.get("model_exists", False)
+    )
+    return jsonify(info)
+
+
 @app.route("/config", methods=["GET", "POST"])
 def config_page():
     error: Optional[str] = None

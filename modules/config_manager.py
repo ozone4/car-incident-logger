@@ -110,16 +110,21 @@ class ConfigManager:
         return bool(self.get("alpr", "enabled", default=False))
 
     @property
-    def alpr_engine(self) -> str:
-        return str(self.get("alpr", "engine", default="easyocr"))
-
-    @property
     def alpr_confidence_threshold(self) -> float:
-        return float(self.get("alpr", "confidence_threshold", default=0.7))
+        return float(self.get("alpr", "confidence_threshold", default=0.5))
 
     @property
     def alpr_scan_interval(self) -> float:
         return float(self.get("alpr", "scan_interval_seconds", default=2.0))
+
+    @property
+    def alpr_yolo_model_path(self) -> str:
+        default = str(self.storage_base_path / "models" / "plate_detector.pt")
+        return str(self.get("alpr", "yolo_model_path", default=default))
+
+    @property
+    def alpr_models_dir(self) -> str:
+        return str(self.get("alpr", "models_dir", default=str(self.storage_base_path / "models")))
 
     @property
     def known_vehicle_profiles(self) -> list[dict]:
