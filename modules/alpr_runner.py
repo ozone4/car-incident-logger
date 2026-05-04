@@ -223,6 +223,7 @@ class _YOLODetector(_BaseDetector):
         self._model: Any = None
         self.status = "uninitialized"
         self.error: str | None = None
+        self.last_raw_detections: list[dict] = []
 
     def initialize(self) -> bool:
         try:
@@ -254,15 +255,29 @@ class _YOLODetector(_BaseDetector):
         if self._model is None:
             return []
         try:
-            results = self._model(frame, conf=self.conf_threshold, verbose=False)
+            # Ask YOLO for low-confidence raw boxes, then apply our own threshold.
+            # This makes diagnostics much easier when a model is almost-but-not-quite
+            # detecting a plate.
+            results = self._model(frame, conf=0.01, verbose=False)
             detections: list[dict] = []
+            raw: list[dict] = []
             for r in results:
+                names = getattr(r, "names", {}) or {}
                 for box in r.boxes:
                     x1, y1, x2, y2 = box.xyxy[0].tolist()
                     conf = float(box.conf[0])
-                    detections.append(
-                        {"bbox": [int(x1), int(y1), int(x2), int(y2)], "confidence": conf}
-                    )
+                    cls_id = int(box.cls[0]) if getattr(box, "cls", None) is not None else None
+                    label = names.get(cls_id, str(cls_id)) if cls_id is not None else None
+                    item = {
+                        "bbox": [int(x1), int(y1), int(x2), int(y2)],
+                        "confidence": conf,
+                        "class_id": cls_id,
+                        "label": label,
+                    }
+                    raw.append(item)
+                    if conf >= self.conf_threshold:
+                        detections.append({"bbox": item["bbox"], "confidence": conf})
+            self.last_raw_detections = raw
             return detections
         except Exception as exc:  # noqa: BLE001
             logger.warning("YOLO detection failed: %s", exc)

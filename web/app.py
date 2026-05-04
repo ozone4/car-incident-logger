@@ -370,12 +370,15 @@ def alpr_test_frame_api():
     ready = runner.initialize()
     status = runner.status_info()
     detections = runner.run_on_frame(result[0]) if ready else []
+    raw_boxes = getattr(getattr(runner, "_detector", None), "last_raw_detections", [])
     return jsonify({
         "ok": True,
         "ready": ready,
         "status": status,
         "detections": detections,
         "count": len(detections),
+        "raw_detector_boxes": raw_boxes,
+        "raw_detector_count": len(raw_boxes),
     })
 
 
