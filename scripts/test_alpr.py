@@ -50,6 +50,14 @@ def _print_status(runner: ALPRRunner) -> None:
         print(f"  →  {s['ocr_error']}", end="")
     print()
     print(f"  Ready    : {s.get('ready', False)}")
+    mode = s.get("mode")
+    if mode:
+        label = {
+            "detector_ocr": "YOLO detector + OCR",
+            "ocr_fallback": "OCR fallback only (works, but not dashcam-grade)",
+            "unavailable": "unavailable",
+        }.get(mode, str(mode))
+        print(f"  Mode     : {label}")
 
 
 def cmd_status(args: argparse.Namespace) -> None:

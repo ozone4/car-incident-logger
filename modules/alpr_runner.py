@@ -461,7 +461,15 @@ class ALPRRunner:
 
     def status_info(self) -> dict:
         """Return a dict describing engine states, suitable for UI/API display."""
-        return {"ready": self._ready, **self._init_status}
+        detector_ready = self._init_status.get("detector") == "ready"
+        ocr_ready = self._init_status.get("ocr") == "ready"
+        if detector_ready and ocr_ready:
+            mode = "detector_ocr"
+        elif ocr_ready:
+            mode = "ocr_fallback"
+        else:
+            mode = "unavailable"
+        return {"ready": self._ready, "mode": mode, **self._init_status}
 
     def run_on_frame(self, frame: np.ndarray) -> list[dict]:
         """
