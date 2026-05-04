@@ -510,7 +510,12 @@ class ALPRRunner:
                     plate, corrected = _normalize_and_correct(raw_text)
                     if not validate_plate_candidate(plate):
                         continue
-                    combined = det_conf * 0.6 + ocr_conf * 0.4
+                    # Detector confidence from small/close/printed plates can be low even
+                    # when the crop is correct. Once YOLO has found a plausible plate box,
+                    # weight OCR more heavily and normalize the detector contribution
+                    # against the configured YOLO threshold instead of raw 0–1 confidence.
+                    det_score = min(det_conf / max(self._yolo_conf_threshold, 0.01), 1.0)
+                    combined = ocr_conf * 0.8 + det_score * 0.2
                     if combined < self._conf_threshold:
                         continue
                     results.append(
