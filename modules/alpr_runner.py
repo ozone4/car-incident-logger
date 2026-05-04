@@ -457,32 +457,13 @@ def _ocr_crop_variants(crop: np.ndarray) -> list[np.ndarray]:
 
 
 def _normalize_and_correct(raw: str) -> tuple[str, bool]:
-    """Normalize OCR text with conservative plate-format corrections.
+    """Normalize OCR text without character substitution.
 
-    Preserve already-plausible mixed formats such as BC-style ``634XSG``.
-    Only force LLLDDD correction when the raw normalized text already resembles
-    that format or when the uncorrected candidate is invalid.
+    RAW OCR is proving more reliable than plate-format guessing in live tests.
+    Keep safe cleanup only: uppercase, remove spaces/hyphens/dots. Do not convert
+    ambiguous characters like 6↔G, 0↔O, 5↔S, etc.
     """
-    norm = normalize_plate(raw)
-    if not norm:
-        return norm, False
-
-    # Common BC format: three digits followed by three letters. Do not convert
-    # 6→G or S→5 here; that caused good OCR like 634-XSG to become G34X56.
-    if re.match(r"^\d{3}[A-Z]{3}$", norm):
-        return norm, False
-
-    # Letter-letter-letter + digit-digit-digit still benefits from ambiguity fixes.
-    if re.match(r"^[A-Z0-9]{6}$", norm):
-        corrected = apply_ocr_corrections(norm, "LLLDDD")
-        if re.match(r"^[A-Z]{3}\d{3}$", corrected):
-            return corrected, corrected != norm
-
-    if validate_plate_candidate(norm):
-        return norm, False
-
-    corrected = apply_ocr_corrections(norm)
-    return corrected, corrected != norm
+    return normalize_plate(raw), False
 
 
 # ---------------------------------------------------------------------------

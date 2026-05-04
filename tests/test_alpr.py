@@ -397,9 +397,9 @@ def test_normalize_and_correct_preserves_digit_digit_digit_letter_letter_letter(
     assert corrected is False
 
 
-def test_normalize_and_correct_still_fixes_lllddd_ambiguity():
+def test_normalize_and_correct_does_not_substitute_ambiguous_chars():
     from modules.alpr_runner import _normalize_and_correct
 
     plate, corrected = _normalize_and_correct("0BCO23")
-    assert plate == "OBC023"
-    assert corrected is True
+    assert plate == "0BCO23"
+    assert corrected is False
