@@ -386,3 +386,20 @@ class TestMultiFrameVoter:
         voter.add_frame([])  # frame with no detections
         best = voter.get_best()
         assert best["frames_seen"] == 2
+
+# ── _normalize_and_correct regression tests ─────────────────────────────────
+
+def test_normalize_and_correct_preserves_digit_digit_digit_letter_letter_letter():
+    from modules.alpr_runner import _normalize_and_correct
+
+    plate, corrected = _normalize_and_correct("634-XSG ")
+    assert plate == "634XSG"
+    assert corrected is False
+
+
+def test_normalize_and_correct_still_fixes_lllddd_ambiguity():
+    from modules.alpr_runner import _normalize_and_correct
+
+    plate, corrected = _normalize_and_correct("0BCO23")
+    assert plate == "OBC023"
+    assert corrected is True

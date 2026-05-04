@@ -286,7 +286,12 @@ class _YOLODetector(_BaseDetector):
 
 
 class _PaddleOCRRecognizer(_BaseRecognizer):
-    """PaddleOCR text recognizer with optional EasyOCR fallback for crops."""
+    """OCR recognizer for plate crops: EasyOCR preferred, PaddleOCR fallback.
+
+    PaddleOCR is accurate when it works, but recent Windows CPU/oneDNN builds can
+    fail at runtime. EasyOCR has been more reliable on Owen's Windows test box,
+    so use it first when installed.
+    """
 
     def __init__(self) -> None:
         self._ocr: Any = None
@@ -298,15 +303,14 @@ class _PaddleOCRRecognizer(_BaseRecognizer):
         self.fallback_error: str | None = None
 
     def initialize(self) -> bool:
+        easy_ok = self._initialize_easyocr_fallback()
+
         try:
             from paddleocr import PaddleOCR  # noqa: PLC0415
-        except ImportError:
+        except ImportError as exc:
             self.status = "unavailable"
-            self.error = (
-                "paddleocr not installed — run: "
-                "pip install paddlepaddle paddleocr  (see requirements-alpr.txt)"
-            )
-            return False
+            self.error = f"paddleocr import failed: {exc}"
+            return easy_ok
 
         # PaddleOCR changed constructor args across major versions. Try newest-safe
         # forms first, then older v2-style args. We intentionally do not pass
@@ -322,14 +326,14 @@ class _PaddleOCRRecognizer(_BaseRecognizer):
             try:
                 self._ocr = PaddleOCR(**kwargs)
                 self.status = "ready"
-                self._initialize_easyocr_fallback()
+                self.error = None
                 return True
             except Exception as exc:  # noqa: BLE001
                 errors.append(str(exc))
 
         self.status = "error"
         self.error = errors[-1] if errors else "PaddleOCR initialization failed"
-        return self._initialize_easyocr_fallback()
+        return easy_ok
 
     def _initialize_easyocr_fallback(self) -> bool:
         try:
@@ -350,8 +354,19 @@ class _PaddleOCRRecognizer(_BaseRecognizer):
             return self.status == "ready"
 
     def recognize(self, image: np.ndarray) -> list[tuple[str, float]]:
-        if self._ocr is None:
-            return []
+        # Prefer EasyOCR for cropped plates on Windows. It avoids PaddleOCR's
+        # intermittent oneDNN runtime failures and was validated on the live test.
+        if self._easyocr is not None:
+            try:
+                easy_results = self._easyocr.readtext(image, detail=1, paragraph=False)
+                texts: list[tuple[str, float]] = []
+                for item in easy_results:
+                    if isinstance(item, (list, tuple)) and len(item) >= 3:
+                        texts.append((str(item[1]), float(item[2])))
+                if texts:
+                    return texts
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("EasyOCR failed: %s", exc)
 
         if self._ocr is not None and not self._paddle_runtime_failed:
             call_attempts = [
@@ -381,17 +396,6 @@ class _PaddleOCRRecognizer(_BaseRecognizer):
                 else:
                     logger.info("PaddleOCR failed once; using EasyOCR fallback for this session")
 
-        if self._easyocr is not None:
-            try:
-                easy_results = self._easyocr.readtext(image, detail=1, paragraph=False)
-                texts: list[tuple[str, float]] = []
-                for item in easy_results:
-                    if isinstance(item, (list, tuple)) and len(item) >= 3:
-                        texts.append((str(item[1]), float(item[2])))
-                if texts:
-                    return texts
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("EasyOCR fallback failed: %s", exc)
         return []
 
 
@@ -453,8 +457,30 @@ def _ocr_crop_variants(crop: np.ndarray) -> list[np.ndarray]:
 
 
 def _normalize_and_correct(raw: str) -> tuple[str, bool]:
-    """Normalize then apply OCR corrections. Returns (plate, was_corrected)."""
+    """Normalize OCR text with conservative plate-format corrections.
+
+    Preserve already-plausible mixed formats such as BC-style ``634XSG``.
+    Only force LLLDDD correction when the raw normalized text already resembles
+    that format or when the uncorrected candidate is invalid.
+    """
     norm = normalize_plate(raw)
+    if not norm:
+        return norm, False
+
+    # Common BC format: three digits followed by three letters. Do not convert
+    # 6→G or S→5 here; that caused good OCR like 634-XSG to become G34X56.
+    if re.match(r"^\d{3}[A-Z]{3}$", norm):
+        return norm, False
+
+    # Letter-letter-letter + digit-digit-digit still benefits from ambiguity fixes.
+    if re.match(r"^[A-Z0-9]{6}$", norm):
+        corrected = apply_ocr_corrections(norm, "LLLDDD")
+        if re.match(r"^[A-Z]{3}\d{3}$", corrected):
+            return corrected, corrected != norm
+
+    if validate_plate_candidate(norm):
+        return norm, False
+
     corrected = apply_ocr_corrections(norm)
     return corrected, corrected != norm
 
