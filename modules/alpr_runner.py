@@ -123,6 +123,65 @@ def validate_plate_candidate(plate: str) -> bool:
     return True
 
 
+def _extract_ocr_texts(result: Any) -> list[tuple[str, float]]:
+    """
+    Extract (text, confidence) pairs from PaddleOCR v2/v3 result shapes.
+
+    Known shapes include:
+      v2: [[[[x,y],...], ["ABC123", 0.91]], ...]
+      v3: [{"rec_texts": ["ABC123"], "rec_scores": [0.91], ...}]
+    """
+    texts: list[tuple[str, float]] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            rec_texts = node.get("rec_texts") or node.get("texts")
+            rec_scores = node.get("rec_scores") or node.get("scores")
+            if isinstance(rec_texts, list) and isinstance(rec_scores, list):
+                for text, score in zip(rec_texts, rec_scores):
+                    try:
+                        texts.append((str(text), float(score)))
+                    except (TypeError, ValueError):
+                        continue
+            text = node.get("text") or node.get("transcription")
+            score = node.get("confidence") or node.get("score")
+            if text is not None and score is not None:
+                try:
+                    texts.append((str(text), float(score)))
+                except (TypeError, ValueError):
+                    pass
+            for value in node.values():
+                walk(value)
+            return
+
+        if isinstance(node, (list, tuple)):
+            if len(node) >= 2:
+                if isinstance(node[0], str):
+                    try:
+                        texts.append((node[0], float(node[1])))
+                    except (TypeError, ValueError):
+                        pass
+                second = node[1]
+                if isinstance(second, (list, tuple)) and len(second) >= 2 and isinstance(second[0], str):
+                    try:
+                        texts.append((second[0], float(second[1])))
+                    except (TypeError, ValueError):
+                        pass
+            for item in node:
+                walk(item)
+
+    walk(result)
+
+    # De-dupe exact repeats while preserving order.
+    seen: set[tuple[str, float]] = set()
+    unique: list[tuple[str, float]] = []
+    for item in texts:
+        if item not in seen:
+            seen.add(item)
+            unique.append(item)
+    return unique
+
+
 # ---------------------------------------------------------------------------
 # Internal engine wrappers  (lazy-load heavy deps at initialize() time)
 # ---------------------------------------------------------------------------
@@ -229,37 +288,48 @@ class _PaddleOCRRecognizer(_BaseRecognizer):
             )
             return False
 
-        try:
-            # det=False: we pass pre-cropped plate regions; skip text-box detection
-            self._ocr = PaddleOCR(
-                use_angle_cls=True,
-                lang="en",
-                det=False,
-                show_log=False,
-            )
-            self.status = "ready"
-            return True
-        except Exception as exc:  # noqa: BLE001
-            self.status = "error"
-            self.error = str(exc)
-            return False
+        # PaddleOCR changed constructor args across major versions. Try newest-safe
+        # forms first, then older v2-style args. We intentionally do not pass
+        # det=False here; PaddleOCR 3.x rejects it, and plate crops are small enough
+        # that text detection inside the crop is acceptable.
+        init_attempts = [
+            {"lang": "en", "use_textline_orientation": True},  # PaddleOCR 3.x
+            {"lang": "en"},
+            {"use_angle_cls": True, "lang": "en", "show_log": False},  # PaddleOCR 2.x
+        ]
+        errors: list[str] = []
+        for kwargs in init_attempts:
+            try:
+                self._ocr = PaddleOCR(**kwargs)
+                self.status = "ready"
+                return True
+            except Exception as exc:  # noqa: BLE001
+                errors.append(str(exc))
+
+        self.status = "error"
+        self.error = errors[-1] if errors else "PaddleOCR initialization failed"
+        return False
 
     def recognize(self, image: np.ndarray) -> list[tuple[str, float]]:
         if self._ocr is None:
             return []
-        try:
-            result = self._ocr.ocr(image, cls=True)
-            texts: list[tuple[str, float]] = []
-            if result and result[0]:
-                for line in result[0]:
-                    if line and len(line) >= 2:
-                        text_conf = line[1]
-                        if isinstance(text_conf, (list, tuple)) and len(text_conf) >= 2:
-                            texts.append((str(text_conf[0]), float(text_conf[1])))
-            return texts
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("PaddleOCR recognition failed: %s", exc)
-            return []
+
+        call_attempts = [
+            lambda: self._ocr.ocr(image, cls=True),
+            lambda: self._ocr.ocr(image),
+            lambda: self._ocr.predict(image),
+        ]
+        last_error: Exception | None = None
+        for call in call_attempts:
+            try:
+                return _extract_ocr_texts(call())
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                continue
+
+        if last_error:
+            logger.warning("PaddleOCR recognition failed: %s", last_error)
+        return []
 
 
 # ---------------------------------------------------------------------------
