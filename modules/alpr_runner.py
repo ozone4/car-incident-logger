@@ -224,6 +224,7 @@ class _YOLODetector(_BaseDetector):
         self.status = "uninitialized"
         self.error: str | None = None
         self.last_raw_detections: list[dict] = []
+        self.last_debug_candidates: list[dict] = []
 
     def initialize(self) -> bool:
         try:
@@ -497,6 +498,7 @@ class ALPRRunner:
             return []
 
         results: list[dict] = []
+        self.last_debug_candidates: list[dict] = []
 
         # ── Detector-first pipeline (YOLO crop → OCR) ─────────────────────────
         if self._detector.status == "ready":
@@ -506,18 +508,43 @@ class ALPRRunner:
                 det_conf = box["confidence"]
                 crop = _preprocess_crop(frame, x1, y1, x2, y2)
                 texts = self._recognizer.recognize(crop)
+                if not texts:
+                    self.last_debug_candidates.append({
+                        "stage": "ocr_empty",
+                        "bbox": box["bbox"],
+                        "detector_confidence": round(det_conf, 3),
+                        "reason": "OCR returned no text for this crop",
+                    })
                 for raw_text, ocr_conf in texts:
                     plate, corrected = _normalize_and_correct(raw_text)
-                    if not validate_plate_candidate(plate):
-                        continue
+                    valid = validate_plate_candidate(plate)
                     # Detector confidence from small/close/printed plates can be low even
                     # when the crop is correct. Once YOLO has found a plausible plate box,
                     # weight OCR more heavily and normalize the detector contribution
                     # against the configured YOLO threshold instead of raw 0–1 confidence.
                     det_score = min(det_conf / max(self._yolo_conf_threshold, 0.01), 1.0)
                     combined = ocr_conf * 0.8 + det_score * 0.2
-                    if combined < self._conf_threshold:
+                    debug = {
+                        "stage": "candidate",
+                        "bbox": box["bbox"],
+                        "detector_confidence": round(det_conf, 3),
+                        "raw_text": raw_text,
+                        "plate": plate,
+                        "corrected": corrected,
+                        "ocr_confidence": round(float(ocr_conf), 3),
+                        "combined_confidence": round(combined, 3),
+                        "valid_plate": valid,
+                    }
+                    if not valid:
+                        debug["reason"] = "plate failed validation"
+                        self.last_debug_candidates.append(debug)
                         continue
+                    if combined < self._conf_threshold:
+                        debug["reason"] = "combined confidence below threshold"
+                        self.last_debug_candidates.append(debug)
+                        continue
+                    debug["accepted"] = True
+                    self.last_debug_candidates.append(debug)
                     results.append(
                         {
                             "plate": plate,

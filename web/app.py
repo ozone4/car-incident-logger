@@ -372,6 +372,7 @@ def alpr_test_frame_api():
     status = runner.status_info()
     detections = runner.run_on_frame(result[0]) if ready else []
     raw_boxes = getattr(getattr(runner, "_detector", None), "last_raw_detections", [])
+    ocr_candidates = getattr(runner, "last_debug_candidates", [])
     return jsonify({
         "ok": True,
         "ready": ready,
@@ -380,6 +381,8 @@ def alpr_test_frame_api():
         "count": len(detections),
         "raw_detector_boxes": raw_boxes,
         "raw_detector_count": len(raw_boxes),
+        "ocr_candidates": ocr_candidates,
+        "ocr_candidate_count": len(ocr_candidates),
     })
 
 
