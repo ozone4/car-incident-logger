@@ -376,7 +376,8 @@ The camera preview on `/camera` is independent of the main logger — you can st
 
 ### Windows notes
 
-- Tested with Python 3.10+ on Windows 10/11.
+- Core camera/UI features are tested with Python 3.10+ on Windows 10/11.
+- **ALPR note:** PaddlePaddle does not currently publish Windows wheels for Python 3.14. For ALPR, use Python **3.11 or 3.12**.
 - No external services required — everything runs locally.
 - Use `python` on your Windows PC; the `py` launcher may not be installed.
 - Camera device index: plug in your USB camera, start the web UI, go to `/camera`, and click **Start Preview**. If the wrong camera opens, edit `camera.device_index` on the `/config` page.
@@ -411,11 +412,11 @@ pip install ultralytics              # YOLO detector
 pip install paddlepaddle paddleocr   # OCR (CPU)
 ```
 
-**Windows note:** If `pip install paddlepaddle` fails, install the wheel manually:
+**Windows note:** If `pip install paddlepaddle` says "No matching distribution found", check your Python version first:
 ```powershell
-pip install paddlepaddle -f https://www.paddlepaddle.org.cn/whl/windows/mkl/avx/stable.html
+python --version
 ```
-Then `pip install paddleocr`.
+If it says Python 3.14, create a Python 3.11/3.12 virtual environment and install ALPR there. PaddlePaddle wheels commonly lag behind the newest Python releases.
 
 ### Get a plate detector model
 
