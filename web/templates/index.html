@@ -21,7 +21,18 @@
     <div class="label">ALPR (Phase 2)</div>
     <div class="badge badge-grey" id="alpr-badge">Checking…</div>
     <div id="alpr-detail" style="font-size:0.82em;color:#888;margin-top:4px"></div>
+    <div class="card-actions" style="margin-top:8px">
+      <button class="btn" id="alpr-start" type="button">Start Live ALPR</button>
+      <button class="btn" id="alpr-stop" type="button">Stop</button>
+    </div>
   </div>
+</div>
+
+<div class="status-card" id="live-alpr-card" style="margin-top:16px">
+  <div class="label">Live Plate Detection</div>
+  <div id="live-alpr-status" class="badge badge-grey">Stopped</div>
+  <div id="live-alpr-best" style="font-size:1.5em;font-weight:700;margin-top:8px">No plate yet</div>
+  <div id="live-alpr-detail" style="font-size:0.9em;color:#888;margin-top:4px">Start the camera preview, then start Live ALPR.</div>
 </div>
 
 <script>
@@ -44,6 +55,48 @@ fetch('/alpr/status').then(r=>r.json()).then(d=>{
 }).catch(function(){
   document.getElementById('alpr-badge').textContent = 'Unavailable';
 });
+
+function renderLiveAlpr(d) {
+  var status = document.getElementById('live-alpr-status');
+  var best = document.getElementById('live-alpr-best');
+  var detail = document.getElementById('live-alpr-detail');
+
+  status.textContent = d.running ? 'Scanning' : 'Stopped';
+  status.className = d.running ? 'badge badge-green' : 'badge badge-grey';
+
+  var plate = d.best || d.latest;
+  if (plate && plate.plate) {
+    var conf = plate.confidence ? Math.round(plate.confidence * 100) + '%' : 'n/a';
+    best.textContent = plate.plate + '  (' + conf + ')';
+  } else {
+    best.textContent = 'No plate yet';
+  }
+
+  var bits = [];
+  if (d.mode) bits.push('mode: ' + d.mode);
+  bits.push('frames: ' + (d.frames_scanned || 0));
+  bits.push('detections: ' + (d.detections_seen || 0));
+  if (d.error) bits.push(d.error);
+  detail.textContent = bits.join(' · ');
+}
+
+function refreshLiveAlpr() {
+  fetch('/alpr/live/status')
+    .then(r => r.json())
+    .then(renderLiveAlpr)
+    .catch(function(){
+      document.getElementById('live-alpr-status').textContent = 'Unavailable';
+    });
+}
+
+document.getElementById('alpr-start').addEventListener('click', function(){
+  fetch('/alpr/live/start', {method:'POST'}).then(r => r.json()).then(renderLiveAlpr);
+});
+document.getElementById('alpr-stop').addEventListener('click', function(){
+  fetch('/alpr/live/stop', {method:'POST'}).then(r => r.json()).then(renderLiveAlpr);
+});
+refreshLiveAlpr();
+setInterval(refreshLiveAlpr, 1500);
 </script>
 
 <h2>Recent Incidents</h2>

@@ -169,3 +169,21 @@ def test_decode_metadata_multiple():
     _decode_metadata(incidents)
     assert incidents[0]["meta"]["plate"] == "AA111"
     assert incidents[1]["meta"]["plate"] == "BB222"
+
+# ── Live ALPR API tests ──────────────────────────────────────────────────────
+
+def test_alpr_live_status_returns_json(client):
+    resp = client.get("/alpr/live/status")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert isinstance(data, dict)
+    assert "running" in data
+    assert "frames_scanned" in data
+
+
+def test_alpr_live_stop_when_not_running(client):
+    resp = client.post("/alpr/live/stop")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["status"] == "stopped"
+    assert data["running"] is False

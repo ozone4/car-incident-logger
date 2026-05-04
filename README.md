@@ -366,13 +366,22 @@ python web/app.py --host 0.0.0.0 --port 8080
 
 | URL | Description |
 |-----|-------------|
-| `/` | Dashboard — camera status + 10 most recent incidents |
+| `/` | Dashboard — camera status, ALPR status, live plate detection controls, + 10 most recent incidents |
 | `/camera` | Live MJPEG camera preview with start/stop controls |
 | `/incidents` | All incidents; search by partial plate (e.g. `WJ`) |
 | `/incidents/<PLATE>` | Per-plate incident history |
 | `/config` | View and edit camera device, resolution, FPS, buffer duration |
 
 The camera preview on `/camera` is independent of the main logger — you can start/stop it to test your camera without running `main.py`.
+
+### Live ALPR from the dashboard
+
+Once optional ALPR dependencies and `data/models/plate_detector.pt` are installed, the dashboard can scan automatically:
+
+1. Start the web UI: `python web/app.py`
+2. Open `http://127.0.0.1:5000/`
+3. Click **Start Live ALPR**
+4. The dashboard reuses the preview camera, scans every `alpr.scan_interval_seconds`, and shows the latest/best voted plate.
 
 ### Windows notes
 

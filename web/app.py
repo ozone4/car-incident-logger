@@ -37,7 +37,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from modules.camera_capture import CameraCapture  # noqa: E402
+from modules.alpr_runner import ALPRRunner  # noqa: E402
 from modules.config_manager import ConfigManager  # noqa: E402
+from modules.multi_frame_voter import MultiFrameVoter  # noqa: E402
 from modules.plate_database import PlateDatabase  # noqa: E402
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -53,6 +55,21 @@ app = Flask(__name__)
 # ── Camera state (module-level, protected by _camera_lock) ───────────────────
 _camera: Optional[CameraCapture] = None
 _camera_lock = threading.Lock()
+
+# ── Live ALPR state ──────────────────────────────────────────────────────────
+_alpr_thread: Optional[threading.Thread] = None
+_alpr_stop_event = threading.Event()
+_alpr_lock = threading.Lock()
+_alpr_state: dict = {
+    "running": False,
+    "ready": False,
+    "mode": "unavailable",
+    "frames_scanned": 0,
+    "detections_seen": 0,
+    "latest": None,
+    "best": None,
+    "error": None,
+}
 
 
 # ── Config helpers ────────────────────────────────────────────────────────────
@@ -100,11 +117,13 @@ def _start_camera() -> dict:
 
 def _stop_camera() -> dict:
     global _camera
+    _alpr_stop_event.set()
     with _camera_lock:
         if _camera is None or not _camera.is_running:
             return {"status": "not_running"}
         _camera.stop()
         _camera = None
+    _set_alpr_state(running=False)
     logger.info("Camera preview stopped")
     return {"status": "stopped"}
 
@@ -120,6 +139,121 @@ def _camera_status() -> dict:
             "fps": cam.fps,
         }
     return {"running": False}
+
+
+# ── Live ALPR management ─────────────────────────────────────────────────────
+
+def _alpr_config() -> dict:
+    cfg = _load_config()
+    return {
+        "confidence_threshold": cfg.alpr_confidence_threshold,
+        "models_dir": cfg.alpr_models_dir,
+        "yolo_model_path": cfg.alpr_yolo_model_path,
+    }
+
+
+def _set_alpr_state(**updates) -> None:
+    with _alpr_lock:
+        _alpr_state.update(updates)
+        _alpr_state["updated_at"] = time.time()
+
+
+def _live_alpr_loop() -> None:
+    """Background scanner: sample latest preview frame, run ALPR, vote over time."""
+    runner = ALPRRunner(_alpr_config())
+    ready = runner.initialize()
+    status = runner.status_info()
+    _set_alpr_state(
+        running=True,
+        ready=ready,
+        mode=status.get("mode", "unavailable"),
+        engine=status,
+        frames_scanned=0,
+        detections_seen=0,
+        latest=None,
+        best=None,
+        error=None if ready else "ALPR engines are not ready",
+    )
+
+    if not ready:
+        _set_alpr_state(running=False)
+        return
+
+    cfg = _load_config()
+    scan_interval = max(0.2, float(cfg.alpr_scan_interval))
+    voter = MultiFrameVoter(min_votes=2)
+
+    while not _alpr_stop_event.is_set():
+        with _camera_lock:
+            cam = _camera
+        if cam is None or not cam.is_running:
+            _set_alpr_state(error="Camera is not running")
+            _alpr_stop_event.wait(0.5)
+            continue
+
+        result = cam.get_frame()
+        if result is None:
+            _set_alpr_state(error="Waiting for first camera frame")
+            _alpr_stop_event.wait(0.2)
+            continue
+
+        frame, _ts = result
+        detections = runner.run_on_frame(frame)
+        voter.add_frame(detections)
+        latest = detections[0] if detections else None
+        best = voter.get_best()
+
+        with _alpr_lock:
+            _alpr_state["frames_scanned"] = int(_alpr_state.get("frames_scanned", 0)) + 1
+            _alpr_state["detections_seen"] = int(_alpr_state.get("detections_seen", 0)) + len(detections)
+            _alpr_state["latest"] = latest
+            _alpr_state["best"] = best
+            _alpr_state["error"] = None
+            _alpr_state["updated_at"] = time.time()
+
+        _alpr_stop_event.wait(scan_interval)
+
+    _set_alpr_state(running=False)
+
+
+def _start_live_alpr() -> dict:
+    global _alpr_thread
+    with _alpr_lock:
+        if _alpr_state.get("running"):
+            return {"status": "already_running", **_alpr_state}
+
+    # Reuse the preview camera; start it automatically if needed.
+    if not _camera_status().get("running"):
+        _start_camera()
+
+    _alpr_stop_event.clear()
+    _set_alpr_state(
+        running=True,
+        ready=False,
+        mode="initializing",
+        frames_scanned=0,
+        detections_seen=0,
+        latest=None,
+        best=None,
+        error="Initializing ALPR engines",
+    )
+    _alpr_thread = threading.Thread(target=_live_alpr_loop, daemon=True, name="LiveALPR")
+    _alpr_thread.start()
+    return {"status": "started", **_get_live_alpr_status()}
+
+
+def _stop_live_alpr() -> dict:
+    _alpr_stop_event.set()
+    thread = _alpr_thread
+    if thread and thread.is_alive():
+        thread.join(timeout=2.0)
+    _set_alpr_state(running=False)
+    return {"status": "stopped", **_get_live_alpr_status()}
+
+
+def _get_live_alpr_status() -> dict:
+    with _alpr_lock:
+        return dict(_alpr_state)
 
 
 # ── MJPEG stream ──────────────────────────────────────────────────────────────
@@ -300,6 +434,21 @@ def alpr_status_api():
         and info.get("model_exists", False)
     )
     return jsonify(info)
+
+
+@app.route("/alpr/live/status")
+def alpr_live_status_api():
+    return jsonify(_get_live_alpr_status())
+
+
+@app.route("/alpr/live/start", methods=["POST"])
+def alpr_live_start_api():
+    return jsonify(_start_live_alpr())
+
+
+@app.route("/alpr/live/stop", methods=["POST"])
+def alpr_live_stop_api():
+    return jsonify(_stop_live_alpr())
 
 
 @app.route("/config", methods=["GET", "POST"])
