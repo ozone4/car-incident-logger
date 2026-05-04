@@ -267,3 +267,13 @@ def test_dashcam_trigger_without_camera(client):
 def test_dashcam_clip_nonexistent(client):
     resp = client.get("/dashcam/clips/nonexistent/clip.mp4")
     assert resp.status_code in (403, 404)
+
+
+def test_config_dashcam_auto_start_defaults(tmp_path):
+    from modules.config_manager import ConfigManager
+
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text("camera: {}\nstorage: {}\n")
+    cfg = ConfigManager(str(cfg_path))
+    assert cfg.dashcam_auto_start_camera is True
+    assert cfg.dashcam_auto_start_alpr is True

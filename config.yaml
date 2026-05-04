@@ -59,6 +59,8 @@ known_vehicles:
       min_matched_traits: 3
 
 dashcam:
+  auto_start_camera: true     # start camera/buffer when web app starts
+  auto_start_alpr: true       # start Live ALPR automatically when available
   pre_roll_seconds: 30       # seconds of video before trigger to include
   post_roll_seconds: 5       # seconds of video after trigger to capture
   output_path: ./data/dashcam  # where incident clips are saved

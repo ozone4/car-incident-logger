@@ -150,6 +150,14 @@ class ConfigManager:
         return Path(self.get("dashcam", "output_path", default="./data/dashcam"))
 
     @property
+    def dashcam_auto_start_camera(self) -> bool:
+        return bool(self.get("dashcam", "auto_start_camera", default=True))
+
+    @property
+    def dashcam_auto_start_alpr(self) -> bool:
+        return bool(self.get("dashcam", "auto_start_alpr", default=True))
+
+    @property
     def notifier_chime_enabled(self) -> bool:
         return bool(self.get("notifier", "chime_enabled", default=False))
 

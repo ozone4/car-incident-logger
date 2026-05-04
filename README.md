@@ -428,6 +428,15 @@ These values can be adjusted in `config.yaml`. The rolling buffer size automatic
 
 ### Windows usage
 
+By default, the web app now behaves like a dashcam: `python web\app.py` automatically starts the camera, arms the rolling buffer, and starts Live ALPR when available. The dashboard Start/Stop buttons remain as recovery/testing controls. To disable this, set:
+
+```yaml
+dashcam:
+  auto_start_camera: false
+  auto_start_alpr: false
+```
+
+
 ```powershell
 # Start the web UI
 python web/app.py

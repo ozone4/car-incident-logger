@@ -816,6 +816,33 @@ def _format_timestamp(ts: str) -> str:
 app.jinja_env.globals["fmt_ts"] = _format_timestamp
 
 
+# ── Startup helpers ──────────────────────────────────────────────────────────
+
+def _auto_start_dashcam_services() -> None:
+    """Start dashcam services for normal in-car operation.
+
+    The manual dashboard buttons remain useful for recovery/testing, but the
+    default app behavior should be dashcam-like: boot → camera/buffer armed →
+    ALPR scanning if available.
+    """
+    try:
+        cfg = _load_config()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Auto-start skipped; config unavailable: %s", exc)
+        return
+
+    if cfg.dashcam_auto_start_camera:
+        result = _start_camera()
+        logger.info("Auto-start camera: %s", result.get("status"))
+
+    if cfg.dashcam_auto_start_alpr:
+        try:
+            result = _start_live_alpr()
+            logger.info("Auto-start ALPR: %s", result.get("status"))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Auto-start ALPR failed: %s", exc)
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -826,4 +853,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     logger.info("Web UI starting at http://%s:%d/", args.host, args.port)
+    if not args.debug:
+        _auto_start_dashcam_services()
+    else:
+        logger.info("Debug mode enabled; skipping auto-start to avoid Flask reloader duplicate camera opens")
     app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)
