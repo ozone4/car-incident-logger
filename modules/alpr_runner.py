@@ -291,6 +291,7 @@ class _PaddleOCRRecognizer(_BaseRecognizer):
     def __init__(self) -> None:
         self._ocr: Any = None
         self._easyocr: Any = None
+        self._paddle_runtime_failed = False
         self.status = "uninitialized"
         self.error: str | None = None
         self.fallback_status = "uninitialized"
@@ -352,21 +353,33 @@ class _PaddleOCRRecognizer(_BaseRecognizer):
         if self._ocr is None:
             return []
 
-        call_attempts = [
-            lambda: self._ocr.ocr(image, cls=True),
-            lambda: self._ocr.ocr(image),
-            lambda: self._ocr.predict(image),
-        ]
-        last_error: Exception | None = None
-        for call in call_attempts:
-            try:
-                return _extract_ocr_texts(call())
-            except Exception as exc:  # noqa: BLE001
-                last_error = exc
-                continue
+        if self._ocr is not None and not self._paddle_runtime_failed:
+            call_attempts = [
+                lambda: self._ocr.ocr(image, cls=True),
+                lambda: self._ocr.ocr(image),
+                lambda: self._ocr.predict(image),
+            ]
+            last_error: Exception | None = None
+            for call in call_attempts:
+                try:
+                    texts = _extract_ocr_texts(call())
+                    if texts:
+                        return texts
+                except Exception as exc:  # noqa: BLE001
+                    last_error = exc
+                    continue
 
-        if last_error:
-            logger.warning("PaddleOCR recognition failed: %s", last_error)
+            if last_error:
+                # PaddleOCR can fail at runtime on some Windows/oneDNN builds.
+                # Disable it for the rest of this process and use EasyOCR fallback
+                # when available instead of logging the same noisy warning every frame.
+                self._paddle_runtime_failed = True
+                self.status = "runtime_error"
+                self.error = str(last_error)
+                if self._easyocr is None:
+                    logger.warning("PaddleOCR recognition failed: %s", last_error)
+                else:
+                    logger.info("PaddleOCR failed once; using EasyOCR fallback for this session")
 
         if self._easyocr is not None:
             try:
