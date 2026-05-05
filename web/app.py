@@ -420,8 +420,8 @@ def _live_alpr_loop() -> None:
         return
 
     cfg = _load_config()
-    scan_interval = max(0.2, float(cfg.alpr_scan_interval))
-    voter = MultiFrameVoter(min_votes=2)
+    scan_interval = max(0.0, float(cfg.alpr_scan_interval))
+    voter = MultiFrameVoter(min_votes=1)
 
     while not _alpr_stop_event.is_set():
         with _camera_lock:
@@ -438,7 +438,11 @@ def _live_alpr_loop() -> None:
             continue
 
         frame, _ts = result
-        detections = runner.run_on_frame(frame)
+        # Downscale for ALPR — YOLO resizes to 640px internally anyway,
+        # so sending the full 1920px frame just wastes time on the pre-resize.
+        h, w = frame.shape[:2]
+        alpr_frame = cv2.resize(frame, (1280, int(h * 1280 / w))) if w > 1280 else frame
+        detections = runner.run_on_frame(alpr_frame)
         voter.add_frame(detections)
         latest = detections[0] if detections else None
         best = voter.get_best()

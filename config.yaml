@@ -36,7 +36,7 @@ alpr:
   enabled: false
   confidence_threshold: 0.5    # minimum combined det+OCR confidence to report a plate
   yolo_confidence_threshold: 0.1 # minimum YOLO box confidence before OCR crop
-  scan_interval_seconds: 2
+  scan_interval_seconds: 0
   # Path to a YOLO plate-detection model (.pt file). Requires ultralytics installed.
   # Download a plate-specific model (e.g. keremberke/license-plate-object-detection)
   # and place it here, or point to any custom-trained YOLOv8/v11 plate weights.
