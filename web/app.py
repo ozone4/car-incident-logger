@@ -288,8 +288,13 @@ def _alpr_config() -> dict:
     return {
         "confidence_threshold": cfg.alpr_confidence_threshold,
         "yolo_confidence_threshold": cfg.alpr_yolo_confidence_threshold,
+        "yolo_imgsz": cfg.alpr_yolo_imgsz,
         "models_dir": cfg.alpr_models_dir,
         "yolo_model_path": cfg.alpr_yolo_model_path,
+        "vehicle_detection_enabled": cfg.alpr_vehicle_detection_enabled,
+        "vehicle_model_path": cfg.alpr_vehicle_model_path,
+        "vehicle_confidence_threshold": cfg.alpr_vehicle_confidence_threshold,
+        "vehicle_fallback_to_fullframe": cfg.alpr_vehicle_fallback_to_fullframe,
     }
 
 
@@ -438,11 +443,7 @@ def _live_alpr_loop() -> None:
             continue
 
         frame, _ts = result
-        # Downscale for ALPR — YOLO resizes to 640px internally anyway,
-        # so sending the full 1920px frame just wastes time on the pre-resize.
-        h, w = frame.shape[:2]
-        alpr_frame = cv2.resize(frame, (1280, int(h * 1280 / w))) if w > 1280 else frame
-        detections = runner.run_on_frame(alpr_frame)
+        detections = runner.run_on_frame(frame)
         voter.add_frame(detections)
         latest = detections[0] if detections else None
         best = voter.get_best()

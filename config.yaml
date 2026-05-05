@@ -36,6 +36,11 @@ alpr:
   enabled: false
   confidence_threshold: 0.5    # minimum combined det+OCR confidence to report a plate
   yolo_confidence_threshold: 0.1 # minimum YOLO box confidence before OCR crop
+  yolo_imgsz: 1280             # YOLO input size in pixels (must be multiple of 32); larger = better distant plate detection, slower inference
+  vehicle_detection_enabled: true   # detect vehicles first, then search for plates within each vehicle crop (much better range)
+  vehicle_model_path: yolov8n.pt    # COCO general detector; ultralytics auto-downloads ~6 MB on first run
+  vehicle_confidence_threshold: 0.3
+  vehicle_fallback_to_fullframe: true  # if no vehicles detected, fall back to direct full-frame plate scan
   scan_interval_seconds: 0
   # Path to a YOLO plate-detection model (.pt file). Requires ultralytics installed.
   # Download a plate-specific model (e.g. keremberke/license-plate-object-detection)

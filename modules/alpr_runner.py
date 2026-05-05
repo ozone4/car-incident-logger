@@ -217,9 +217,10 @@ class _BaseRecognizer:
 class _YOLODetector(_BaseDetector):
     """YOLO plate detector via ultralytics (optional)."""
 
-    def __init__(self, model_path: str, conf_threshold: float = 0.5) -> None:
+    def __init__(self, model_path: str, conf_threshold: float = 0.5, imgsz: int = 1280) -> None:
         self.model_path = model_path
         self.conf_threshold = conf_threshold
+        self._imgsz = imgsz
         self._model: Any = None
         self.status = "uninitialized"
         self.error: str | None = None
@@ -259,7 +260,7 @@ class _YOLODetector(_BaseDetector):
             # Ask YOLO for low-confidence raw boxes, then apply our own threshold.
             # This makes diagnostics much easier when a model is almost-but-not-quite
             # detecting a plate.
-            results = self._model(frame, conf=0.01, verbose=False)
+            results = self._model(frame, conf=0.01, verbose=False, imgsz=self._imgsz)
             detections: list[dict] = []
             raw: list[dict] = []
             for r in results:
@@ -282,6 +283,71 @@ class _YOLODetector(_BaseDetector):
             return detections
         except Exception as exc:  # noqa: BLE001
             logger.warning("YOLO detection failed: %s", exc)
+            return []
+
+
+_VEHICLE_COCO_CLASSES: dict[int, str] = {
+    2: "car",
+    3: "motorcycle",
+    5: "bus",
+    7: "truck",
+}
+
+
+class _VehicleDetector:
+    """General COCO-trained YOLO vehicle detector.
+
+    Detects cars, trucks, motorcycles, and buses on the full frame so the plate
+    detector can focus on high-resolution vehicle crops rather than the full image.
+    ultralytics will auto-download yolov8n.pt (~6 MB) on first use when given a
+    bare model name rather than a file path.
+    """
+
+    def __init__(self, model_path: str = "yolov8n.pt", conf_threshold: float = 0.3, imgsz: int = 1280) -> None:
+        self.model_path = model_path
+        self.conf_threshold = conf_threshold
+        self._imgsz = imgsz
+        self._model: Any = None
+        self.status = "uninitialized"
+        self.error: str | None = None
+
+    def initialize(self) -> bool:
+        try:
+            from ultralytics import YOLO  # noqa: PLC0415
+        except ImportError:
+            self.status = "unavailable"
+            self.error = "ultralytics not installed"
+            return False
+        try:
+            self._model = YOLO(self.model_path)
+            self.status = "ready"
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self.status = "error"
+            self.error = str(exc)
+            return False
+
+    def detect(self, frame: np.ndarray) -> list[dict]:
+        """Return [{bbox, confidence, vehicle_type}] for all detected vehicles."""
+        if self._model is None:
+            return []
+        try:
+            results = self._model(frame, conf=self.conf_threshold, verbose=False, imgsz=self._imgsz)
+            detections: list[dict] = []
+            for r in results:
+                for box in r.boxes:
+                    cls_id = int(box.cls[0]) if getattr(box, "cls", None) is not None else None
+                    if cls_id not in _VEHICLE_COCO_CLASSES:
+                        continue
+                    x1, y1, x2, y2 = box.xyxy[0].tolist()
+                    detections.append({
+                        "bbox": [int(x1), int(y1), int(x2), int(y2)],
+                        "confidence": float(box.conf[0]),
+                        "vehicle_type": _VEHICLE_COCO_CLASSES[cls_id],
+                    })
+            return detections
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Vehicle detection failed: %s", exc)
             return []
 
 
@@ -419,10 +485,10 @@ def _preprocess_crop(
     crop = frame[y1:y2, x1:x2]
 
     ch, cw = crop.shape[:2]
-    if cw < 320 and cw > 0:
+    if cw < 480 and cw > 0:
         try:
             import cv2  # noqa: PLC0415
-            scale = 320 / cw
+            scale = 480 / cw
             interp = getattr(cv2, "INTER_CUBIC", 2)  # 2 is the cv2.INTER_CUBIC int value
             crop = cv2.resize(
                 crop,
@@ -433,6 +499,27 @@ def _preprocess_crop(
             pass  # cv2 missing or mocked — return crop as-is
 
     return crop
+
+
+def _extract_region(
+    frame: np.ndarray, x1: int, y1: int, x2: int, y2: int, pad_ratio: float = 0.05
+) -> tuple[np.ndarray, int, int]:
+    """Crop a region with padding. Returns (crop, origin_x, origin_y).
+
+    origin_x / origin_y are the top-left pixel of the crop in the original frame,
+    used to remap bounding boxes detected inside the crop back to full-frame coords.
+    Unlike _preprocess_crop this never upscales, so the coordinate mapping stays 1:1.
+    """
+    h, w = frame.shape[:2]
+    bw = max(1, x2 - x1)
+    bh = max(1, y2 - y1)
+    pad_x = max(5, int(bw * pad_ratio))
+    pad_y = max(5, int(bh * pad_ratio))
+    cx1 = max(0, x1 - pad_x)
+    cy1 = max(0, y1 - pad_y)
+    cx2 = min(w, x2 + pad_x)
+    cy2 = min(h, y2 + pad_y)
+    return frame[cy1:cy2, cx1:cx2], cx1, cy1
 
 
 def _ocr_crop_variants(crop: np.ndarray) -> list[np.ndarray]:
@@ -451,6 +538,9 @@ def _ocr_crop_variants(crop: np.ndarray) -> list[np.ndarray]:
             31,
             5,
         ))
+        import numpy as np  # noqa: PLC0415
+        kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+        variants.append(cv2.filter2D(gray, -1, kernel))
     except Exception:  # noqa: BLE001
         pass
     return variants
@@ -486,10 +576,15 @@ class ALPRRunner:
       _BaseDetector / _BaseRecognizer to swap engines without changing this class.
 
     Constructor accepts a config dict with keys:
-      confidence_threshold       float  (default 0.5) final plate confidence
-      yolo_confidence_threshold  float  (default 0.1) detector box threshold
-      models_dir                 str    (default ./data/models)
-      yolo_model_path            str    (default <models_dir>/plate_detector.pt)
+      confidence_threshold          float  (default 0.5)  final plate confidence
+      yolo_confidence_threshold     float  (default 0.1)  plate detector box threshold
+      yolo_imgsz                    int    (default 1280) YOLO input size (multiple of 32)
+      models_dir                    str    (default ./data/models)
+      yolo_model_path               str    (default <models_dir>/plate_detector.pt)
+      vehicle_detection_enabled     bool   (default True) run vehicle detector first
+      vehicle_model_path            str    (default yolov8n.pt, auto-downloaded)
+      vehicle_confidence_threshold  float  (default 0.3)  vehicle detector threshold
+      vehicle_fallback_to_fullframe bool   (default True) direct plate scan when no vehicles found
     """
 
     def __init__(
@@ -498,19 +593,34 @@ class ALPRRunner:
         *,
         detector: _BaseDetector | None = None,
         recognizer: _BaseRecognizer | None = None,
+        vehicle_detector: _VehicleDetector | None = None,
     ) -> None:
         cfg = config or {}
         self._conf_threshold = float(cfg.get("confidence_threshold", 0.5))
         self._yolo_conf_threshold = float(cfg.get("yolo_confidence_threshold", 0.1))
+        self._yolo_imgsz = int(cfg.get("yolo_imgsz", 1280))
+        self._vehicle_fallback_to_fullframe = bool(cfg.get("vehicle_fallback_to_fullframe", True))
         models_dir = Path(cfg.get("models_dir", "./data/models"))
         yolo_path = cfg.get(
             "yolo_model_path", str(models_dir / "plate_detector.pt")
         )
 
         self._detector: _BaseDetector = detector or _YOLODetector(
-            yolo_path, self._yolo_conf_threshold
+            yolo_path, self._yolo_conf_threshold, imgsz=self._yolo_imgsz
         )
         self._recognizer: _BaseRecognizer = recognizer or _PaddleOCRRecognizer()
+
+        if vehicle_detector is not None:
+            self._vehicle_detector: _VehicleDetector | None = vehicle_detector
+        elif cfg.get("vehicle_detection_enabled", True):
+            self._vehicle_detector = _VehicleDetector(
+                model_path=cfg.get("vehicle_model_path", "yolov8n.pt"),
+                conf_threshold=float(cfg.get("vehicle_confidence_threshold", 0.3)),
+                imgsz=self._yolo_imgsz,
+            )
+        else:
+            self._vehicle_detector = None
+
         self._ready = False
         self._init_status: dict = {}
 
@@ -522,6 +632,16 @@ class ALPRRunner:
         det_ok = self._detector.initialize()
         ocr_ok = self._recognizer.initialize()
 
+        veh_ok = False
+        if self._vehicle_detector is not None:
+            veh_ok = self._vehicle_detector.initialize()
+            if not veh_ok:
+                logger.warning(
+                    "Vehicle detector unavailable (%s): %s",
+                    self._vehicle_detector.status,
+                    self._vehicle_detector.error or "",
+                )
+
         self._init_status = {
             "detector": self._detector.status,
             "detector_error": self._detector.error,
@@ -529,6 +649,8 @@ class ALPRRunner:
             "ocr_error": self._recognizer.error,
             "ocr_fallback": getattr(self._recognizer, "fallback_status", None),
             "ocr_fallback_error": getattr(self._recognizer, "fallback_error", None),
+            "vehicle_detector": self._vehicle_detector.status if self._vehicle_detector else "disabled",
+            "vehicle_detector_error": self._vehicle_detector.error if self._vehicle_detector else None,
         }
 
         if not det_ok:
@@ -545,8 +667,10 @@ class ALPRRunner:
             )
 
         self._ready = ocr_ok
-        if det_ok and ocr_ok:
-            logger.info("ALPR ready: YOLO detector + PaddleOCR")
+        if veh_ok and det_ok and ocr_ok:
+            logger.info("ALPR ready: vehicle detector + plate YOLO + PaddleOCR")
+        elif det_ok and ocr_ok:
+            logger.info("ALPR ready: plate YOLO + PaddleOCR (no vehicle detector)")
         elif ocr_ok:
             logger.info("ALPR ready: whole-frame PaddleOCR only (no plate detector)")
         else:
@@ -578,103 +702,151 @@ class ALPRRunner:
         if not self._ready:
             return []
 
-        results: list[dict] = []
         self.last_debug_candidates: list[dict] = []
 
-        # ── Detector-first pipeline (YOLO crop → OCR) ─────────────────────────
-        if self._detector.status == "ready":
-            boxes = self._detector.detect(frame)
-            for box in boxes:
-                x1, y1, x2, y2 = box["bbox"]
-                det_conf = box["confidence"]
-                crop = _preprocess_crop(frame, x1, y1, x2, y2, pad_ratio=0.18)
-                texts: list[tuple[str, float]] = []
-                for idx, variant in enumerate(_ocr_crop_variants(crop)):
-                    texts = self._recognizer.recognize(variant)
-                    if texts:
-                        self.last_debug_candidates.append({
-                            "stage": "ocr_variant_used",
-                            "bbox": box["bbox"],
-                            "variant": idx,
-                            "texts": [{"text": t, "confidence": round(float(c), 3)} for t, c in texts],
-                        })
-                        break
-                if not texts:
-                    ch, cw = crop.shape[:2]
-                    self.last_debug_candidates.append({
-                        "stage": "ocr_empty",
-                        "bbox": box["bbox"],
-                        "detector_confidence": round(det_conf, 3),
-                        "crop_size": [int(cw), int(ch)],
-                        "variants_tried": len(_ocr_crop_variants(crop)),
-                        "reason": "OCR returned no text for this crop",
-                    })
-                for raw_text, ocr_conf in texts:
-                    plate, corrected = _normalize_and_correct(raw_text)
-                    valid = validate_plate_candidate(plate)
-                    # Detector confidence from small/close/printed plates can be low even
-                    # when the crop is correct. Once YOLO has found a plausible plate box,
-                    # weight OCR more heavily and normalize the detector contribution
-                    # against the configured YOLO threshold instead of raw 0–1 confidence.
-                    det_score = min(det_conf / max(self._yolo_conf_threshold, 0.01), 1.0)
-                    combined = ocr_conf * 0.8 + det_score * 0.2
-                    debug = {
-                        "stage": "candidate",
-                        "bbox": box["bbox"],
-                        "detector_confidence": round(det_conf, 3),
-                        "raw_text": raw_text,
-                        "plate": plate,
-                        "corrected": corrected,
-                        "ocr_confidence": round(float(ocr_conf), 3),
-                        "combined_confidence": round(combined, 3),
-                        "valid_plate": valid,
+        # ── Two-stage vehicle → plate cascade ─────────────────────────────────
+        # Detect vehicles first, then focus the plate detector on each vehicle crop.
+        # A plate inside a 300px-wide vehicle crop appears ~5–10× larger to the plate
+        # detector than it would in the full frame, enabling detection at much greater range.
+        if (
+            self._vehicle_detector is not None
+            and self._vehicle_detector.status == "ready"
+            and self._detector.status == "ready"
+        ):
+            vehicles = self._vehicle_detector.detect(frame)
+            results: list[dict] = []
+            for vehicle in vehicles:
+                vx1, vy1, vx2, vy2 = vehicle["bbox"]
+                veh_crop, veh_ox, veh_oy = _extract_region(frame, vx1, vy1, vx2, vy2, pad_ratio=0.05)
+                for box in self._detector.detect(veh_crop):
+                    # Remap plate coords from vehicle-crop space → full-frame space.
+                    px1, py1, px2, py2 = box["bbox"]
+                    full_bbox = [veh_ox + px1, veh_oy + py1, veh_ox + px2, veh_oy + py2]
+                    extra = {
+                        "source": "vehicle+yolo+paddle",
+                        "vehicle_type": vehicle["vehicle_type"],
+                        "vehicle_bbox": vehicle["bbox"],
                     }
-                    if not valid:
-                        debug["reason"] = "plate failed validation"
-                        self.last_debug_candidates.append(debug)
-                        continue
-                    if combined < self._conf_threshold:
-                        debug["reason"] = "combined confidence below threshold"
-                        self.last_debug_candidates.append(debug)
-                        continue
-                    debug["accepted"] = True
-                    self.last_debug_candidates.append(debug)
-                    results.append(
-                        {
-                            "plate": plate,
-                            "confidence": round(combined, 3),
-                            "bbox": box["bbox"],
-                            "frame_w": frame.shape[1],
-                            "frame_h": frame.shape[0],
-                            "source": "yolo+paddle",
-                            "raw_text": raw_text,
-                            "corrected": corrected,
-                        }
-                    )
+                    results.extend(self._ocr_plate_box(frame, box, full_bbox=full_bbox, extra=extra))
+
+            if not vehicles and self._vehicle_fallback_to_fullframe:
+                results.extend(self._direct_plate_scan(frame))
+
             return results
 
-        # ── Whole-frame fallback (PaddleOCR on full frame) ────────────────────
-        if self._recognizer.status == "ready":
-            texts = self._recognizer.recognize(frame)
-            for raw_text, ocr_conf in texts:
-                plate, corrected = _normalize_and_correct(raw_text)
-                if not validate_plate_candidate(plate):
-                    continue
-                # Higher bar for full-frame: more false positives expected
-                threshold = max(self._conf_threshold, 0.80)
-                if ocr_conf < threshold:
-                    continue
-                results.append(
-                    {
-                        "plate": plate,
-                        "confidence": round(ocr_conf * 0.7, 3),  # penalty for no detector
-                        "bbox": None,
-                        "frame_w": frame.shape[1],
-                        "frame_h": frame.shape[0],
-                        "source": "paddle_fullframe",
-                        "raw_text": raw_text,
-                        "corrected": corrected,
-                    }
-                )
+        # ── Direct plate scan (no vehicle detector configured or ready) ────────
+        if self._detector.status == "ready":
+            return self._direct_plate_scan(frame)
 
+        # ── Whole-frame OCR fallback ───────────────────────────────────────────
+        return self._fullframe_ocr(frame)
+
+    def _ocr_plate_box(
+        self,
+        frame: np.ndarray,
+        box: dict,
+        full_bbox: list[int] | None = None,
+        extra: dict | None = None,
+    ) -> list[dict]:
+        """Run OCR on a single plate detection box and return validated detection dicts."""
+        bbox = full_bbox if full_bbox is not None else box["bbox"]
+        x1, y1, x2, y2 = bbox
+        det_conf = box["confidence"]
+        crop = _preprocess_crop(frame, x1, y1, x2, y2, pad_ratio=0.18)
+        texts: list[tuple[str, float]] = []
+        for idx, variant in enumerate(_ocr_crop_variants(crop)):
+            texts = self._recognizer.recognize(variant)
+            if texts:
+                self.last_debug_candidates.append({
+                    "stage": "ocr_variant_used",
+                    "bbox": bbox,
+                    "variant": idx,
+                    "texts": [{"text": t, "confidence": round(float(c), 3)} for t, c in texts],
+                })
+                break
+        if not texts:
+            ch, cw = crop.shape[:2]
+            self.last_debug_candidates.append({
+                "stage": "ocr_empty",
+                "bbox": bbox,
+                "detector_confidence": round(det_conf, 3),
+                "crop_size": [int(cw), int(ch)],
+                "variants_tried": len(_ocr_crop_variants(crop)),
+                "reason": "OCR returned no text for this crop",
+            })
+        results = []
+        for raw_text, ocr_conf in texts:
+            plate, corrected = _normalize_and_correct(raw_text)
+            valid = validate_plate_candidate(plate)
+            # Detector confidence from small/close/printed plates can be low even
+            # when the crop is correct. Once YOLO has found a plausible plate box,
+            # weight OCR more heavily and normalize the detector contribution
+            # against the configured YOLO threshold instead of raw 0–1 confidence.
+            det_score = min(det_conf / max(self._yolo_conf_threshold, 0.01), 1.0)
+            combined = ocr_conf * 0.8 + det_score * 0.2
+            debug = {
+                "stage": "candidate",
+                "bbox": bbox,
+                "detector_confidence": round(det_conf, 3),
+                "raw_text": raw_text,
+                "plate": plate,
+                "corrected": corrected,
+                "ocr_confidence": round(float(ocr_conf), 3),
+                "combined_confidence": round(combined, 3),
+                "valid_plate": valid,
+            }
+            if not valid:
+                debug["reason"] = "plate failed validation"
+                self.last_debug_candidates.append(debug)
+                continue
+            if combined < self._conf_threshold:
+                debug["reason"] = "combined confidence below threshold"
+                self.last_debug_candidates.append(debug)
+                continue
+            debug["accepted"] = True
+            self.last_debug_candidates.append(debug)
+            det: dict = {
+                "plate": plate,
+                "confidence": round(combined, 3),
+                "bbox": bbox,
+                "frame_w": frame.shape[1],
+                "frame_h": frame.shape[0],
+                "source": "yolo+paddle",
+                "raw_text": raw_text,
+                "corrected": corrected,
+            }
+            if extra:
+                det.update(extra)
+            results.append(det)
+        return results
+
+    def _direct_plate_scan(self, frame: np.ndarray) -> list[dict]:
+        """Run the plate detector directly on the full frame."""
+        results = []
+        for box in self._detector.detect(frame):
+            results.extend(self._ocr_plate_box(frame, box))
+        return results
+
+    def _fullframe_ocr(self, frame: np.ndarray) -> list[dict]:
+        """OCR-only fallback when no plate detector is available."""
+        if self._recognizer.status != "ready":
+            return []
+        results = []
+        for raw_text, ocr_conf in self._recognizer.recognize(frame):
+            plate, corrected = _normalize_and_correct(raw_text)
+            if not validate_plate_candidate(plate):
+                continue
+            threshold = max(self._conf_threshold, 0.80)
+            if ocr_conf < threshold:
+                continue
+            results.append({
+                "plate": plate,
+                "confidence": round(ocr_conf * 0.7, 3),  # penalty for no detector
+                "bbox": None,
+                "frame_w": frame.shape[1],
+                "frame_h": frame.shape[0],
+                "source": "paddle_fullframe",
+                "raw_text": raw_text,
+                "corrected": corrected,
+            })
         return results
