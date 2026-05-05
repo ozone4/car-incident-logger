@@ -2,168 +2,215 @@
 {% block title %}Dashboard — Car Incident Logger{% endblock %}
 
 {% block content %}
-<h1>Dashboard</h1>
+<!-- ── Hero: REC status + Incident button + Health ──────────────────────── -->
+<div class="kiosk-hero">
+  <div class="kiosk-rec" id="kiosk-rec">
+    <span class="rec-dot" id="rec-dot"></span>
+    <span class="rec-label" id="rec-label">---</span>
+  </div>
 
-<div class="status-row">
-  <div class="status-card">
-    <div class="label">Camera</div>
-    {% if camera.running %}
-      <div class="badge badge-green">Running — {{ camera.resolution }} @ {{ camera.fps }} fps (device {{ camera.device_index }})</div>
-    {% else %}
-      <div class="badge badge-grey">Stopped</div>
-    {% endif %}
-    <div class="card-actions">
-      <a href="{{ url_for('camera_page') }}" class="btn">Open Preview</a>
+  <button class="kiosk-incident-btn" id="dashcam-trigger" type="button" disabled>
+    <span class="incident-icon">&#9679;</span>
+    <span id="incident-btn-label">INCIDENT</span>
+  </button>
+
+  <div class="kiosk-health" id="kiosk-health">
+    <div class="health-light" id="health-light"></div>
+    <div class="health-text" id="health-text">...</div>
+  </div>
+</div>
+
+<!-- ── Status strip: Camera / Storage / ALPR ───────────────────────────── -->
+<div class="kiosk-strip">
+  <div class="strip-item" id="strip-camera">
+    <span class="strip-label">Camera</span>
+    <span class="strip-value badge badge-grey" id="strip-camera-val">
+      {% if camera.running %}
+        Running
+      {% else %}
+        Stopped
+      {% endif %}
+    </span>
+  </div>
+  <div class="strip-item" id="strip-storage">
+    <span class="strip-label">Storage</span>
+    <span class="strip-value" id="strip-storage-val">--</span>
+  </div>
+  <div class="strip-item" id="strip-alpr">
+    <span class="strip-label">ALPR</span>
+    <span class="strip-value badge badge-grey" id="strip-alpr-val">--</span>
+  </div>
+  <div class="strip-item" id="strip-rec-detail">
+    <span class="strip-label">Recording</span>
+    <span class="strip-value" id="strip-rec-detail-val">--</span>
+  </div>
+</div>
+
+<!-- ── Capture progress bar (visible during trigger) ───────────────────── -->
+<div class="kiosk-progress hidden" id="capture-progress">
+  <div class="progress-bar" id="capture-bar"></div>
+  <span class="progress-text" id="capture-text">Capturing...</span>
+</div>
+
+<!-- ── Last incident result ────────────────────────────────────────────── -->
+<div class="kiosk-last-incident hidden" id="last-incident">
+  <span id="last-incident-text"></span>
+</div>
+
+<!-- ── Two-column: Sightings + Recent incidents ────────────────────────── -->
+<div class="kiosk-panels">
+  <div class="kiosk-panel">
+    <div class="panel-header">
+      <span class="panel-title">Live Plate Sightings</span>
+      <span class="badge badge-grey" id="alpr-scan-badge">Stopped</span>
     </div>
-  </div>
-
-  <div class="status-card" id="alpr-card">
-    <div class="label">ALPR (Phase 2)</div>
-    <div class="badge badge-grey" id="alpr-badge">Checking…</div>
-    <div id="alpr-detail" style="font-size:0.82em;color:#888;margin-top:4px"></div>
-    <div class="card-actions" style="margin-top:8px">
-      <button class="btn" id="alpr-start" type="button">Start Live ALPR</button>
-      <button class="btn" id="alpr-stop" type="button">Stop</button>
+    <div class="panel-actions">
+      <button class="btn btn-sm" id="alpr-start" type="button">Start ALPR</button>
+      <button class="btn btn-sm btn-secondary" id="alpr-stop" type="button">Stop</button>
     </div>
-  </div>
-</div>
-
-<div class="status-card" id="health-card" style="margin-top:16px">
-  <div class="label">System Health</div>
-  <div id="health-status" class="badge badge-grey">Checking...</div>
-  <div id="health-issues" style="font-size:0.9em;color:#888;margin-top:4px"></div>
-  <div id="health-disk" style="font-size:0.85em;margin-top:4px"></div>
-</div>
-
-<script>
-function refreshHealth() {
-  fetch('/health')
-    .then(r => r.json())
-    .then(function(d) {
-      var status = document.getElementById('health-status');
-      var issues = document.getElementById('health-issues');
-      var disk = document.getElementById('health-disk');
-
-      var colorMap = {green: 'badge-green', yellow: 'badge-yellow', red: 'badge-red', grey: 'badge-grey'};
-      status.textContent = d.status.toUpperCase();
-      status.className = 'badge ' + (colorMap[d.status] || 'badge-grey');
-
-      if (d.issues && d.issues.length) {
-        issues.innerHTML = d.issues.map(function(i){ return '<div style="color:#c33">⚠ ' + escapeHtml(i) + '</div>'; }).join('');
-      } else {
-        issues.innerHTML = '<span style="color:#393">All systems nominal</span>';
-      }
-
-      if (d.disk) {
-        disk.textContent = 'Disk: ' + d.disk.free_gb + ' GB free / ' + d.disk.total_gb + ' GB total (' + d.disk.percent_used + '% used)';
-      }
-    })
-    .catch(function(){ });
-}
-refreshHealth();
-setInterval(refreshHealth, 5000);
-</script>
-
-<div class="status-card" id="recording-card" style="margin-top:16px">
-  <div class="label">Continuous Recording</div>
-  <div id="rec-status" class="badge badge-grey">Checking...</div>
-  <div id="rec-detail" style="font-size:0.9em;color:#888;margin-top:4px"></div>
-  <div class="card-actions">
-    <a href="{{ url_for('recordings_page') }}" class="btn">Browse Recordings</a>
-  </div>
-</div>
-
-<script>
-function refreshRecording() {
-  fetch('/recording/status')
-    .then(r => r.json())
-    .then(function(d) {
-      var status = document.getElementById('rec-status');
-      var detail = document.getElementById('rec-detail');
-      if (d.recording) {
-        status.innerHTML = '<span style="color:#c00">&#9679;</span> REC';
-        status.className = 'badge badge-green';
-        var bits = [];
-        if (d.current_segment) bits.push('segment: ' + d.current_segment.split('/').pop());
-        bits.push('frames: ' + (d.frames_in_segment || 0));
-        bits.push('completed: ' + (d.segments_completed || 0) + ' segments');
-        if (d.overlay_enabled) bits.push('overlay on');
-        detail.textContent = bits.join(' · ');
-      } else {
-        status.textContent = d.enabled === false ? 'Disabled' : 'Stopped';
-        status.className = 'badge badge-grey';
-        detail.textContent = d.last_error || (d.enabled === false ? 'Enable in config to start recording.' : 'Start camera to begin recording.');
-      }
-    })
-    .catch(function(){ });
-}
-refreshRecording();
-setInterval(refreshRecording, 2000);
-</script>
-
-<div class="status-card" id="live-alpr-card" style="margin-top:16px">
-  <div class="label">Live Plate Detection</div>
-  <div id="live-alpr-status" class="badge badge-grey">Stopped</div>
-  <div id="live-alpr-best" style="font-size:1.5em;font-weight:700;margin-top:8px">No plate yet</div>
-  <div id="live-alpr-detail" style="font-size:0.9em;color:#888;margin-top:4px">Start the camera preview, then start Live ALPR.</div>
-  <div class="plate-log" style="margin-top:12px;width:100%">
-    <div class="label">Plate sightings</div>
     <div id="plate-sightings" class="sightings-list muted">No sightings yet.</div>
+    <div class="kiosk-best-plate" id="live-alpr-best">No plate yet</div>
+  </div>
+
+  <div class="kiosk-panel">
+    <div class="panel-header">
+      <span class="panel-title">Recent Incidents</span>
+      <a href="{{ url_for('incidents_page') }}" class="btn btn-sm btn-secondary">All Incidents</a>
+    </div>
+    {% if incidents %}
+    <div class="kiosk-incident-list">
+      {% for inc in incidents[:6] %}
+      <a class="kiosk-incident-row" href="{{ url_for('plate_detail', plate=inc.plate) }}">
+        <span class="mono incident-plate">{{ inc.plate }}</span>
+        <span class="incident-time">{{ fmt_ts(inc.timestamp) }}</span>
+        <span class="incident-source">{{ inc.meta.get('trigger_source', 'button') }}</span>
+        {% set clip = inc.clip_path or inc.meta.get('clip_path') %}
+        {% if clip and inc.meta.get('timestamp') %}
+        <span class="incident-export">
+          <a href="{{ url_for('dashcam_export', incident_id=inc.meta.get('timestamp', '')) }}" class="btn btn-sm btn-secondary">Export</a>
+        </span>
+        {% endif %}
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted panel-empty">No incidents recorded yet.</p>
+    {% endif %}
   </div>
 </div>
 
-<script>
-fetch('/alpr/status').then(r=>r.json()).then(d=>{
-  var badge = document.getElementById('alpr-badge');
-  var detail = document.getElementById('alpr-detail');
-  if (d.ready) {
-    badge.textContent = 'Ready';
-    badge.className = 'badge badge-green';
-  } else {
-    badge.textContent = d.alpr_enabled ? 'Enabled — deps missing' : 'Disabled';
-    badge.className = 'badge badge-grey';
-    var hints = [];
-    if (d.detector === 'unavailable') hints.push(d.detector_hint || 'install ultralytics');
-    if (d.ocr === 'unavailable') hints.push(d.ocr_hint || 'install paddleocr');
-    if (d.detector === 'available' && d.ocr === 'available' && !d.model_exists)
-      hints.push('model file missing: ' + (d.model_path || 'plate_detector.pt'));
-    if (hints.length) detail.textContent = hints.join(' · ');
-  }
-}).catch(function(){
-  document.getElementById('alpr-badge').textContent = 'Unavailable';
-});
+<!-- ── Quick nav bar ───────────────────────────────────────────────────── -->
+<div class="kiosk-nav">
+  <a href="{{ url_for('camera_page') }}" class="kiosk-nav-btn">Camera</a>
+  <a href="{{ url_for('recordings_page') }}" class="kiosk-nav-btn">Recordings</a>
+  <a href="{{ url_for('incidents_page') }}" class="kiosk-nav-btn">Incidents</a>
+  <a href="{{ url_for('config_page') }}" class="kiosk-nav-btn">Config</a>
+</div>
 
+<!-- ── Dashboard JS ────────────────────────────────────────────────────── -->
+<script>
 function escapeHtml(value) {
   return String(value || '').replace(/[&<>"']/g, function(ch) {
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
   });
 }
 
-function renderLiveAlpr(d) {
-  var status = document.getElementById('live-alpr-status');
-  var best = document.getElementById('live-alpr-best');
-  var detail = document.getElementById('live-alpr-detail');
-  var sightings = document.getElementById('plate-sightings');
+/* ── Health polling ──────────────────────────────────────────────────── */
+function refreshHealth() {
+  fetch('/health')
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      var light = document.getElementById('health-light');
+      var text = document.getElementById('health-text');
+      var colorMap = {green:'health-green', yellow:'health-yellow', red:'health-red'};
+      light.className = 'health-light ' + (colorMap[d.status] || '');
+      if (d.issues && d.issues.length) {
+        text.textContent = d.issues[0];
+      } else {
+        text.textContent = 'OK';
+      }
+      // Storage
+      if (d.disk) {
+        var pct = d.disk.percent_used;
+        var cls = pct > 90 ? 'badge badge-red' : pct > 75 ? 'badge badge-yellow' : 'badge badge-green';
+        document.getElementById('strip-storage-val').className = 'strip-value ' + cls;
+        document.getElementById('strip-storage-val').textContent = d.disk.free_gb + ' GB free';
+      }
+    })
+    .catch(function(){});
+}
+refreshHealth();
+setInterval(refreshHealth, 5000);
 
-  status.textContent = d.running ? 'Scanning' : 'Stopped';
-  status.className = d.running ? 'badge badge-green' : 'badge badge-grey';
+/* ── Recording status ────────────────────────────────────────────────── */
+function refreshRecording() {
+  fetch('/recording/status')
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      var dot = document.getElementById('rec-dot');
+      var label = document.getElementById('rec-label');
+      var detail = document.getElementById('strip-rec-detail-val');
+      if (d.recording) {
+        dot.className = 'rec-dot rec-active';
+        label.textContent = 'REC';
+        var bits = [];
+        if (d.current_segment) bits.push(d.current_segment.split('/').pop());
+        bits.push((d.frames_in_segment || 0) + ' frames');
+        bits.push((d.segments_completed || 0) + ' segs');
+        detail.textContent = bits.join(' · ');
+        detail.className = 'strip-value badge badge-green';
+      } else {
+        dot.className = 'rec-dot';
+        label.textContent = d.enabled === false ? 'OFF' : 'STOP';
+        detail.textContent = d.enabled === false ? 'Disabled' : 'Stopped';
+        detail.className = 'strip-value badge badge-grey';
+      }
+    })
+    .catch(function(){});
+}
+refreshRecording();
+setInterval(refreshRecording, 2000);
+
+/* ── Camera status ───────────────────────────────────────────────────── */
+function refreshCamera() {
+  fetch('/camera/status')
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      var el = document.getElementById('strip-camera-val');
+      if (d.running) {
+        el.textContent = 'Running';
+        el.className = 'strip-value badge badge-green';
+      } else {
+        el.textContent = 'Stopped';
+        el.className = 'strip-value badge badge-grey';
+      }
+    })
+    .catch(function(){});
+}
+refreshCamera();
+setInterval(refreshCamera, 5000);
+
+/* ── Live ALPR ───────────────────────────────────────────────────────── */
+function renderLiveAlpr(d) {
+  var scanBadge = document.getElementById('alpr-scan-badge');
+  var best = document.getElementById('live-alpr-best');
+  var sightings = document.getElementById('plate-sightings');
+  var stripAlpr = document.getElementById('strip-alpr-val');
+
+  scanBadge.textContent = d.running ? 'Scanning' : 'Stopped';
+  scanBadge.className = d.running ? 'badge badge-green' : 'badge badge-grey';
+  stripAlpr.textContent = d.running ? 'Active · ' + (d.detections_seen || 0) : 'Off';
+  stripAlpr.className = d.running ? 'strip-value badge badge-green' : 'strip-value badge badge-grey';
 
   var plate = d.best || d.latest;
   if (plate && plate.plate) {
-    var conf = plate.confidence ? Math.round(plate.confidence * 100) + '%' : 'n/a';
-    best.textContent = plate.plate + '  (' + conf + ')';
+    var conf = plate.confidence ? Math.round(plate.confidence * 100) + '%' : '';
+    best.textContent = plate.plate + (conf ? '  ' + conf : '');
+    best.className = 'kiosk-best-plate has-plate';
   } else {
     best.textContent = 'No plate yet';
+    best.className = 'kiosk-best-plate';
   }
-
-  var bits = [];
-  if (plate && plate.raw_text) bits.push('raw OCR: ' + plate.raw_text.trim());
-  if (plate && plate.corrected) bits.push('normalized/corrected');
-  if (d.mode) bits.push('mode: ' + d.mode);
-  bits.push('frames: ' + (d.frames_scanned || 0));
-  bits.push('detections: ' + (d.detections_seen || 0));
-  if (d.error) bits.push(d.error);
-  detail.textContent = bits.join(' · ');
 
   var rows = d.sightings || [];
   if (!rows.length) {
@@ -171,14 +218,15 @@ function renderLiveAlpr(d) {
     sightings.textContent = 'No sightings yet.';
   } else {
     sightings.className = 'sightings-list';
-    sightings.innerHTML = rows.slice(0, 12).map(function(row){
-      var conf = row.best_confidence ? Math.round(row.best_confidence * 100) + '%' : 'n/a';
-      var raw = row.raw_text ? 'raw ' + escapeHtml(row.raw_text) : '';
-      var status = row.active ? 'visible' : 'gone ' + escapeHtml(row.last_seen_label || '');
-      var statusClass = row.active ? 'badge badge-green' : 'badge badge-grey';
+    sightings.innerHTML = rows.slice(0, 8).map(function(row){
+      var conf = row.best_confidence ? Math.round(row.best_confidence * 100) + '%' : '';
+      var statusCls = row.active ? 'badge badge-green' : 'badge badge-grey';
+      var statusTxt = row.active ? 'visible' : 'gone';
       return '<div class="sighting-row">' +
-        '<div><strong class="mono">' + escapeHtml(row.plate) + '</strong> <span class="' + statusClass + '">' + status + '</span></div>' +
-        '<div class="muted">best ' + conf + ' · seen ' + (row.seen_count || 0) + '×' + (raw ? ' · ' + raw : '') + '</div>' +
+        '<strong class="mono">' + escapeHtml(row.plate) + '</strong> ' +
+        '<span class="' + statusCls + '">' + statusTxt + '</span>' +
+        (conf ? ' <span class="muted">' + conf + '</span>' : '') +
+        ' <span class="muted">×' + (row.seen_count || 0) + '</span>' +
       '</div>';
     }).join('');
   }
@@ -186,164 +234,112 @@ function renderLiveAlpr(d) {
 
 function refreshLiveAlpr() {
   fetch('/alpr/live/status')
-    .then(r => r.json())
+    .then(function(r){ return r.json(); })
     .then(renderLiveAlpr)
-    .catch(function(){
-      document.getElementById('live-alpr-status').textContent = 'Unavailable';
-    });
+    .catch(function(){});
 }
 
 document.getElementById('alpr-start').addEventListener('click', function(){
-  fetch('/alpr/live/start', {method:'POST'}).then(r => r.json()).then(renderLiveAlpr);
+  fetch('/alpr/live/start', {method:'POST'}).then(function(r){ return r.json(); }).then(renderLiveAlpr);
 });
 document.getElementById('alpr-stop').addEventListener('click', function(){
-  fetch('/alpr/live/stop', {method:'POST'}).then(r => r.json()).then(renderLiveAlpr);
+  fetch('/alpr/live/stop', {method:'POST'}).then(function(r){ return r.json(); }).then(renderLiveAlpr);
 });
 refreshLiveAlpr();
 setInterval(refreshLiveAlpr, 1500);
-</script>
 
-<div class="status-card" id="dashcam-card" style="margin-top:16px">
-  <div class="label">Dashcam Capture</div>
-  <div id="dashcam-status" class="badge badge-grey">Checking...</div>
-  <div id="dashcam-detail" style="font-size:0.9em;color:#888;margin-top:4px">Start the camera to enable dashcam capture.</div>
-  <div class="card-actions" style="margin-top:8px">
-    <button class="btn btn-danger" id="dashcam-trigger" type="button" disabled>Trigger Incident</button>
-  </div>
-  <div id="dashcam-last" style="font-size:0.85em;margin-top:8px"></div>
-</div>
+/* ── ALPR readiness (strip) ──────────────────────────────────────────── */
+fetch('/alpr/status').then(function(r){ return r.json(); }).then(function(d) {
+  if (!d.ready && !d.alpr_enabled) {
+    document.getElementById('strip-alpr-val').textContent = 'Disabled';
+  }
+}).catch(function(){});
 
-<script>
+/* ── Dashcam status + trigger ────────────────────────────────────────── */
 function refreshDashcam() {
   fetch('/dashcam/status')
-    .then(r => r.json())
+    .then(function(r){ return r.json(); })
     .then(function(d) {
-      var status = document.getElementById('dashcam-status');
-      var detail = document.getElementById('dashcam-detail');
       var btn = document.getElementById('dashcam-trigger');
-      var last = document.getElementById('dashcam-last');
-
-      if (d.attached) {
-        status.textContent = 'Buffer active';
-        status.className = 'badge badge-green';
-        detail.textContent = d.frame_count + ' frames buffered (' + d.duration + 's) · pre-roll ' + d.pre_roll_seconds + 's · post-roll ' + d.post_roll_seconds + 's';
-        btn.disabled = !d.trigger_armed;
+      if (d.attached && d.trigger_armed) {
+        btn.disabled = false;
       } else {
-        status.textContent = 'Not active';
-        status.className = 'badge badge-grey';
-        detail.textContent = 'Start the camera to enable dashcam capture.';
         btn.disabled = true;
       }
-
+      // Show last result
+      var lastEl = document.getElementById('last-incident');
+      var lastText = document.getElementById('last-incident-text');
       if (d.last_error) {
-        last.innerHTML = '<span style="color:#c33">Last error: ' + escapeHtml(d.last_error) + '</span>';
+        lastEl.classList.remove('hidden');
+        lastText.innerHTML = '<span style="color:var(--red)">Error: ' + escapeHtml(d.last_error) + '</span>';
       } else if (d.last_result) {
+        lastEl.classList.remove('hidden');
         var r = d.last_result;
-        var plate = r.plate || '(no plate)';
-        last.innerHTML = 'Last clip: <strong>' + escapeHtml(plate) + '</strong> at ' + escapeHtml(r.timestamp || '') + ' (' + (r.total_frames || 0) + ' frames)';
-      } else {
-        last.textContent = '';
+        lastText.innerHTML = 'Last: <strong class="mono">' + escapeHtml(r.plate || 'no plate') + '</strong> at ' + escapeHtml(r.timestamp || '') + ' (' + (r.total_frames || 0) + ' frames)';
       }
     })
-    .catch(function(){ });
+    .catch(function(){});
 }
 
 document.getElementById('dashcam-trigger').addEventListener('click', function(){
   var btn = this;
-  btn.disabled = true;
-  btn.textContent = 'Capturing...';
-  var statusEl = document.getElementById('dashcam-status');
-  statusEl.textContent = 'Capturing pre-roll...';
-  statusEl.className = 'badge badge-yellow';
+  var label = document.getElementById('incident-btn-label');
+  var progress = document.getElementById('capture-progress');
+  var bar = document.getElementById('capture-bar');
+  var ptext = document.getElementById('capture-text');
 
-  // Poll capture state during post-roll
+  btn.disabled = true;
+  btn.classList.add('capturing');
+  label.textContent = 'CAPTURING...';
+  progress.classList.remove('hidden');
+  bar.style.width = '10%';
+  ptext.textContent = 'Capturing pre-roll...';
+
   var pollId = setInterval(function(){
-    fetch('/dashcam/status').then(r=>r.json()).then(function(s){
+    fetch('/dashcam/status').then(function(r){ return r.json(); }).then(function(s){
       var state = s.capture_state || 'idle';
-      if (state === 'capturing') { btn.textContent = 'Capturing post-roll...'; statusEl.textContent = 'Capturing...'; }
-      else if (state === 'saving') { btn.textContent = 'Saving clip...'; statusEl.textContent = 'Saving...'; }
+      if (state === 'capturing') { ptext.textContent = 'Capturing post-roll...'; bar.style.width = '50%'; }
+      else if (state === 'saving') { ptext.textContent = 'Saving clip...'; bar.style.width = '80%'; }
     }).catch(function(){});
   }, 800);
 
   fetch('/dashcam/trigger', {method:'POST'})
-    .then(r => r.json())
+    .then(function(r){ return r.json(); })
     .then(function(d){
       clearInterval(pollId);
-      btn.textContent = 'Trigger Incident';
-      btn.disabled = false;
-      refreshDashcam();
+      bar.style.width = '100%';
       if (d.ok) {
-        statusEl.textContent = 'Incident saved!';
-        statusEl.className = 'badge badge-green';
-        var last = document.getElementById('dashcam-last');
-        var plate = d.plate || '(no plate)';
-        last.innerHTML = 'Last clip: <strong>' + escapeHtml(plate) + '</strong> at ' + escapeHtml(d.timestamp || '') + ' (' + (d.total_frames || 0) + ' frames)';
+        ptext.textContent = 'Incident saved!';
+        label.textContent = 'SAVED';
+        btn.classList.remove('capturing');
+        btn.classList.add('saved');
+        var lastEl = document.getElementById('last-incident');
+        var lastText = document.getElementById('last-incident-text');
+        lastEl.classList.remove('hidden');
+        lastText.innerHTML = 'Last: <strong class="mono">' + escapeHtml(d.plate || 'no plate') + '</strong> at ' + escapeHtml(d.timestamp || '') + ' (' + (d.total_frames || 0) + ' frames)';
       } else {
-        statusEl.textContent = 'Capture failed';
-        statusEl.className = 'badge badge-red';
-        var last = document.getElementById('dashcam-last');
-        last.innerHTML = '<span style="color:#c33">Error: ' + escapeHtml(d.error || 'unknown') + '</span>';
+        ptext.textContent = 'Capture failed';
+        label.textContent = 'FAILED';
+        btn.classList.remove('capturing');
       }
+      setTimeout(function(){
+        label.textContent = 'INCIDENT';
+        btn.disabled = false;
+        btn.classList.remove('saved');
+        progress.classList.add('hidden');
+        bar.style.width = '0';
+      }, 3000);
     })
     .catch(function(){
       clearInterval(pollId);
-      btn.textContent = 'Trigger Incident';
+      label.textContent = 'INCIDENT';
       btn.disabled = false;
+      btn.classList.remove('capturing');
+      progress.classList.add('hidden');
     });
 });
 
 refreshDashcam();
 setInterval(refreshDashcam, 3000);
 </script>
-
-<h2>Recent Incidents</h2>
-{% if incidents %}
-<table>
-  <thead>
-    <tr>
-      <th>Plate</th>
-      <th>Time</th>
-      <th>Source</th>
-      <th>Frames</th>
-      <th>Note / Sightings</th>
-      <th>Media</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for inc in incidents %}
-    <tr>
-      <td>
-        <a href="{{ url_for('plate_detail', plate=inc.plate) }}">
-          {{ inc.plate }}
-        </a>
-      </td>
-      <td class="mono">{{ fmt_ts(inc.timestamp) }}</td>
-      <td>{{ inc.meta.get('trigger_source', 'button') }}</td>
-      <td>{{ inc.meta.get('total_frames', '') }}</td>
-      <td>
-        {% if inc.meta.get('recent_sightings') %}
-          {% for s in inc.meta.get('recent_sightings', [])[:3] %}
-            <span class="mono" style="font-size:0.85em">{{ s.get('plate', '') }}</span>{% if not loop.last %}, {% endif %}
-          {% endfor %}
-        {% elif inc.meta.get('parsed_note') or inc.meta.get('transcript') %}
-          {{ (inc.meta.get('parsed_note') or inc.meta.get('transcript', '')) | truncate(60) }}
-        {% else %}—{% endif %}
-      </td>
-      <td class="file-links">
-        {% set clip = inc.clip_path or inc.meta.get('clip_path') %}
-        {% if clip %}
-          <a href="{{ url_for('serve_media', path=clip) }}">clip</a>
-          {% if inc.meta.get('timestamp') %}
-            · <a href="{{ url_for('dashcam_export', incident_id=inc.meta.get('timestamp', '')) }}">export</a>
-          {% endif %}
-        {% else %}—{% endif %}
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-<p><a href="{{ url_for('incidents_page') }}">View all incidents →</a></p>
-{% else %}
-<p class="muted">No incidents recorded yet. Start the main logger and log an incident to see it here.</p>
-{% endif %}
 {% endblock %}

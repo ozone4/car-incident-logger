@@ -539,6 +539,7 @@ def _generate_frames():
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route("/")
+@app.route("/dashboard")
 def index():
     db = _get_db()
     incidents = db.get_all_incidents(limit=10) if db else []

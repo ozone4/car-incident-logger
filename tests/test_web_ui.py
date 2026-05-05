@@ -47,6 +47,19 @@ def test_index_returns_200(client):
     assert b"Dashboard" in resp.data
 
 
+def test_dashboard_alias_returns_200(client):
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    assert b"Dashboard" in resp.data
+    assert b"kiosk-hero" in resp.data
+
+
+def test_dashboard_has_incident_button(client):
+    resp = client.get("/")
+    assert b"dashcam-trigger" in resp.data
+    assert b"INCIDENT" in resp.data
+
+
 def test_camera_page_returns_200(client):
     resp = client.get("/camera")
     assert resp.status_code == 200

@@ -372,7 +372,8 @@ python web/app.py --host 0.0.0.0 --port 8080
 
 | URL | Description |
 |-----|-------------|
-| `/` | Dashboard — camera status, ALPR status, live plate detection controls, + 10 most recent incidents |
+| `/` | Dashboard — touch-friendly kiosk UI with REC status, incident trigger, health, sightings, recent incidents |
+| `/dashboard` | Alias for `/` |
 | `/camera` | Live MJPEG camera preview with start/stop controls |
 | `/recordings` | Browse, play, lock/unlock, and delete continuous recording segments |
 | `/incidents` | All incidents; search by partial plate (e.g. `WJ`) |
@@ -409,6 +410,25 @@ Once optional ALPR dependencies and `data/models/plate_detector.pt` are installe
 - No external services required — everything runs locally.
 - Use `python` on your Windows PC; the `py` launcher may not be installed.
 - Camera device index: plug in your USB camera, start the web UI, go to `/camera`, and click **Start Preview**. If the wrong camera opens, edit `camera.device_index` on the `/config` page.
+
+### Kiosk / Touchscreen mode
+
+The dashboard is designed for in-car use on a 7–10" touchscreen (e.g. Raspberry Pi + official display). To run in kiosk mode:
+
+```bash
+# Start the web server on the local network
+python3 web/app.py --host 0.0.0.0 --port 5000
+
+# Open Chromium in kiosk/fullscreen mode (Raspberry Pi example):
+chromium-browser --kiosk --noerrdialogs --disable-infobars http://localhost:5000/
+```
+
+**Tips:**
+- The dashboard hides the sidebar on screens under 900px wide, maximizing usable space.
+- All core actions (incident trigger, ALPR start/stop) use large tap targets — no hover-only interactions.
+- The REC indicator and health light provide at-a-glance status while driving.
+- On macOS/Windows, press **F11** in your browser for fullscreen, or use `--kiosk` flag with Chrome/Edge.
+- The `/dashboard` URL is an alias for `/` if you prefer a descriptive bookmark.
 
 ---
 
