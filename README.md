@@ -664,6 +664,46 @@ python scripts/test_alpr.py --camera --frames 30
 
 ---
 
+## Windows Auto-Start
+
+To run the dashcam app automatically on boot (Windows 10/11), use **Task Scheduler**:
+
+### Option 1: Task Scheduler (recommended)
+
+1. Open **Task Scheduler** (search "Task Scheduler" in Start).
+2. Click **Create Basic Task**.
+3. Name it `Car Incident Logger`, click Next.
+4. Trigger: **When the computer starts**, click Next.
+5. Action: **Start a program**.
+6. Program/script: `pythonw.exe` (or full path, e.g. `C:\Python311\pythonw.exe`)
+7. Arguments: `web/app.py --host 0.0.0.0 --port 5000`
+8. Start in: `C:\path\to\car-incident-logger` (your project directory)
+9. Finish. Then edit the task properties:
+   - Check **Run whether user is logged on or not**
+   - Check **Run with highest privileges** (needed for camera/USB access)
+   - Under Conditions, uncheck "Start only if on AC power" for in-car use
+
+### Option 2: Startup batch file
+
+Create `start_dashcam.bat` in the project root:
+
+```batch
+@echo off
+cd /d "%~dp0"
+python web/app.py --host 0.0.0.0 --port 5000
+```
+
+Place a shortcut to this file in `shell:startup` (press Win+R, type `shell:startup`).
+
+### Notes
+
+- Use `pythonw.exe` instead of `python.exe` to run without a console window.
+- Ensure your Python environment has all dependencies installed (`pip install -r requirements.txt`).
+- The app binds to `0.0.0.0` so you can access the dashboard from another device on the same network.
+- For headless operation, the camera auto-starts on boot if `dashcam.auto_start_camera: true` in config.yaml.
+
+---
+
 ## Licence
 
 MIT

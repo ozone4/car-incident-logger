@@ -46,6 +46,7 @@ from modules.incident_trigger import WebTrigger  # noqa: E402
 from modules.multi_frame_voter import MultiFrameVoter  # noqa: E402
 from modules.plate_database import PlateDatabase  # noqa: E402
 from modules.rolling_buffer import RollingBuffer  # noqa: E402
+from modules.recording_recovery import recover_recordings  # noqa: E402
 from modules.storage_manager import StorageManager  # noqa: E402
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -94,6 +95,7 @@ _web_trigger = WebTrigger()
 # ── Storage + health state ──────────────────────────────────────────────────
 _storage_manager: Optional[StorageManager] = None
 _health_monitor: Optional[HealthMonitor] = None
+_last_recovery_result: Optional[dict] = None
 
 
 # ── Config helpers ────────────────────────────────────────────────────────────
@@ -222,6 +224,48 @@ def _save_dashcam_incident_to_db(result: dict) -> None:
         db.add_incident(plate, metadata)
     except Exception as exc:
         logger.warning("Could not save dashcam incident to DB: %s", exc)
+
+    # Auto-protect recent recording segments near the incident
+    _auto_protect_recent_segments()
+
+
+def _auto_protect_recent_segments() -> None:
+    """Lock the most recent recording segments to protect incident context."""
+    try:
+        cfg = _load_config()
+        recording_path = Path(cfg.recording_output_path)
+        if not recording_path.exists():
+            return
+
+        # Lock segments from the last 2 minutes (covers pre-roll + current)
+        import time as _time
+        cutoff = _time.time() - 120
+
+        for json_path in recording_path.rglob("*.json"):
+            if json_path.suffix == ".tmp":
+                continue
+            try:
+                meta = json.loads(json_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+
+            if meta.get("locked"):
+                continue
+
+            # Check if this segment is recent enough to protect
+            end_time_str = meta.get("end_time", "")
+            try:
+                from datetime import datetime as _dt, timezone as _tz
+                dt = _dt.fromisoformat(end_time_str.replace("Z", "+00:00"))
+                if dt.timestamp() >= cutoff:
+                    meta["locked"] = True
+                    meta["locked_reason"] = "incident_auto_protect"
+                    json_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+                    logger.debug("Auto-protected segment: %s", json_path.name)
+            except (ValueError, AttributeError):
+                continue
+    except Exception as exc:
+        logger.warning("Auto-protect segments failed: %s", exc)
 
 
 def _camera_status() -> dict:
@@ -793,6 +837,7 @@ def dashcam_status_api():
     """Return dashcam buffer status and last trigger result."""
     status = _dashcam.buffer_status() if _dashcam else {"attached": False}
     status["trigger_armed"] = _web_trigger.is_armed
+    status["capture_state"] = _dashcam.capture_state if _dashcam else "idle"
     status["last_result"] = _dashcam.last_result if _dashcam else None
     status["last_error"] = _dashcam.last_error if _dashcam else None
     return jsonify(status)
@@ -829,6 +874,37 @@ def dashcam_clip_file(subpath):
     if not candidate.exists():
         return "Not found", 404
     return send_file(str(candidate))
+
+
+@app.route("/dashcam/export/<path:incident_id>")
+def dashcam_export(incident_id):
+    """Export a dashcam incident as a zip (clip + metadata)."""
+    import io
+    import zipfile
+
+    cfg = _load_config()
+    clip_dir = cfg.dashcam_output_path.resolve()
+    incident_dir = (clip_dir / incident_id).resolve()
+
+    try:
+        incident_dir.relative_to(clip_dir)
+    except ValueError:
+        return "Forbidden", 403
+    if not incident_dir.exists() or not incident_dir.is_dir():
+        return "Not found", 404
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file in incident_dir.iterdir():
+            if file.is_file():
+                zf.write(file, f"{incident_id}/{file.name}")
+    buf.seek(0)
+
+    return Response(
+        buf.getvalue(),
+        mimetype="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=incident_{incident_id}.zip"},
+    )
 
 
 # ── Health + Storage routes ─────────────────────────────────────────────────
@@ -875,6 +951,23 @@ def storage_cleanup_api():
     dry_run = request.args.get("dry_run", "false").lower() in ("true", "1", "yes")
     result = _storage_manager.run_cleanup(dry_run=dry_run)
     return jsonify(result)
+
+
+@app.route("/storage/recovery")
+def storage_recovery_api():
+    """Return last startup recovery results."""
+    if _last_recovery_result is None:
+        return jsonify({"summary": "No recovery has been run", "recovered": [], "corrupt": [], "cleaned": []})
+    return jsonify(_last_recovery_result)
+
+
+@app.route("/storage/recovery/run", methods=["POST"])
+def storage_recovery_run_api():
+    """Manually trigger recording recovery scan."""
+    global _last_recovery_result
+    cfg = _load_config()
+    _last_recovery_result = recover_recordings(cfg.recording_output_path)
+    return jsonify(_last_recovery_result)
 
 
 # ── Recordings browser routes ──────────────────────────────────────────────
@@ -1194,11 +1287,21 @@ def _auto_start_dashcam_services() -> None:
     default app behavior should be dashcam-like: boot → camera/buffer armed →
     ALPR scanning if available.
     """
+    global _last_recovery_result
     try:
         cfg = _load_config()
     except Exception as exc:  # noqa: BLE001
         logger.warning("Auto-start skipped; config unavailable: %s", exc)
         return
+
+    # Run recording recovery before starting services
+    try:
+        recording_path = cfg.recording_output_path
+        _last_recovery_result = recover_recordings(recording_path)
+        if _last_recovery_result.get("recovered") or _last_recovery_result.get("corrupt"):
+            logger.info("Startup recovery: %s", _last_recovery_result["summary"])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Recording recovery failed: %s", exc)
 
     # Always start storage manager (cleanup runs regardless of camera state)
     _start_storage_manager()

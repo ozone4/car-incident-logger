@@ -44,6 +44,7 @@ class DashcamRecorder:
         # Last trigger status (read by web UI)
         self._last_result: Optional[Dict[str, Any]] = None
         self._last_error: Optional[str] = None
+        self._capture_state: str = "idle"  # idle, capturing, saving, done, error
 
     def attach(self, rolling_buffer, camera=None) -> None:
         """Attach a RollingBuffer (required) and optionally a CameraCapture for post-roll."""
@@ -61,6 +62,10 @@ class DashcamRecorder:
     @property
     def last_error(self) -> Optional[str]:
         return self._last_error
+
+    @property
+    def capture_state(self) -> str:
+        return self._capture_state
 
     def buffer_status(self) -> Dict[str, Any]:
         """Return current buffer state for the web UI."""
@@ -89,13 +94,16 @@ class DashcamRecorder:
         if not self._busy.acquire(blocking=False):
             err = "Capture already in progress"
             self._last_error = err
+            self._capture_state = "error"
             return {"ok": False, "error": err}
 
         try:
+            self._capture_state = "capturing"
             return self._do_capture(source, alpr_plate, recent_sightings)
         except Exception as exc:
             logger.exception("Dashcam capture failed")
             self._last_error = str(exc)
+            self._capture_state = "error"
             return {"ok": False, "error": str(exc)}
         finally:
             self._busy.release()
@@ -117,6 +125,7 @@ class DashcamRecorder:
             return {"ok": False, "error": self._last_error}
 
         # 2. Capture post-roll frames (if camera available)
+        self._capture_state = "capturing"
         post_frames = self._capture_post_roll()
 
         all_frames = pre_frames + post_frames
@@ -129,6 +138,7 @@ class DashcamRecorder:
         incident_dir.mkdir(parents=True, exist_ok=True)
 
         # 4. Save clip
+        self._capture_state = "saving"
         clip_path = self._save_clip(all_frames, incident_dir)
 
         # 5. Build and save metadata
@@ -148,6 +158,7 @@ class DashcamRecorder:
 
         self._last_result = metadata
         self._last_error = None
+        self._capture_state = "done"
         logger.info(
             "Dashcam incident saved: %s (%d frames, plate=%s)",
             incident_dir, len(all_frames), plate or "(none)",

@@ -229,6 +229,7 @@ class LoopRecorder:
                 "frame_count": frame_count,
                 "file_path": str(final_path),
                 "locked": False,
+                "complete": True,
             }
             meta_path = final_path.with_suffix(".json")
             try:

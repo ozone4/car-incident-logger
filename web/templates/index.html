@@ -252,19 +252,41 @@ document.getElementById('dashcam-trigger').addEventListener('click', function(){
   var btn = this;
   btn.disabled = true;
   btn.textContent = 'Capturing...';
+  var statusEl = document.getElementById('dashcam-status');
+  statusEl.textContent = 'Capturing pre-roll...';
+  statusEl.className = 'badge badge-yellow';
+
+  // Poll capture state during post-roll
+  var pollId = setInterval(function(){
+    fetch('/dashcam/status').then(r=>r.json()).then(function(s){
+      var state = s.capture_state || 'idle';
+      if (state === 'capturing') { btn.textContent = 'Capturing post-roll...'; statusEl.textContent = 'Capturing...'; }
+      else if (state === 'saving') { btn.textContent = 'Saving clip...'; statusEl.textContent = 'Saving...'; }
+    }).catch(function(){});
+  }, 800);
+
   fetch('/dashcam/trigger', {method:'POST'})
     .then(r => r.json())
     .then(function(d){
+      clearInterval(pollId);
       btn.textContent = 'Trigger Incident';
       btn.disabled = false;
       refreshDashcam();
       if (d.ok) {
-        alert('Incident saved: ' + (d.plate || 'no plate') + ' (' + (d.total_frames || 0) + ' frames)');
+        statusEl.textContent = 'Incident saved!';
+        statusEl.className = 'badge badge-green';
+        var last = document.getElementById('dashcam-last');
+        var plate = d.plate || '(no plate)';
+        last.innerHTML = 'Last clip: <strong>' + escapeHtml(plate) + '</strong> at ' + escapeHtml(d.timestamp || '') + ' (' + (d.total_frames || 0) + ' frames)';
       } else {
-        alert('Capture failed: ' + (d.error || 'unknown error'));
+        statusEl.textContent = 'Capture failed';
+        statusEl.className = 'badge badge-red';
+        var last = document.getElementById('dashcam-last');
+        last.innerHTML = '<span style="color:#c33">Error: ' + escapeHtml(d.error || 'unknown') + '</span>';
       }
     })
     .catch(function(){
+      clearInterval(pollId);
       btn.textContent = 'Trigger Incident';
       btn.disabled = false;
     });
@@ -282,7 +304,8 @@ setInterval(refreshDashcam, 3000);
       <th>Plate</th>
       <th>Time</th>
       <th>Source</th>
-      <th>Note</th>
+      <th>Frames</th>
+      <th>Note / Sightings</th>
       <th>Media</th>
     </tr>
   </thead>
@@ -296,12 +319,23 @@ setInterval(refreshDashcam, 3000);
       </td>
       <td class="mono">{{ fmt_ts(inc.timestamp) }}</td>
       <td>{{ inc.meta.get('trigger_source', 'button') }}</td>
-      <td>{{ inc.meta.get('parsed_note') or inc.meta.get('transcript', '') | truncate(80) }}</td>
+      <td>{{ inc.meta.get('total_frames', '') }}</td>
+      <td>
+        {% if inc.meta.get('recent_sightings') %}
+          {% for s in inc.meta.get('recent_sightings', [])[:3] %}
+            <span class="mono" style="font-size:0.85em">{{ s.get('plate', '') }}</span>{% if not loop.last %}, {% endif %}
+          {% endfor %}
+        {% elif inc.meta.get('parsed_note') or inc.meta.get('transcript') %}
+          {{ (inc.meta.get('parsed_note') or inc.meta.get('transcript', '')) | truncate(60) }}
+        {% else %}—{% endif %}
+      </td>
       <td class="file-links">
-        {% if inc.clip_path %}
-          <a href="{{ url_for('serve_media', path=inc.clip_path) }}">clip</a>
-        {% elif inc.meta.get('clip_path') %}
-          <a href="{{ url_for('serve_media', path=inc.meta.clip_path) }}">clip</a>
+        {% set clip = inc.clip_path or inc.meta.get('clip_path') %}
+        {% if clip %}
+          <a href="{{ url_for('serve_media', path=clip) }}">clip</a>
+          {% if inc.meta.get('timestamp') %}
+            · <a href="{{ url_for('dashcam_export', incident_id=inc.meta.get('timestamp', '')) }}">export</a>
+          {% endif %}
         {% else %}—{% endif %}
       </td>
     </tr>
