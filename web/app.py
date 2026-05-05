@@ -877,6 +877,240 @@ def storage_cleanup_api():
     return jsonify(result)
 
 
+# ── Recordings browser routes ──────────────────────────────────────────────
+
+def _list_all_recordings() -> list[dict]:
+    """List all recording segments from sidecar JSON files, newest first."""
+    cfg = _load_config()
+    recording_path = Path(cfg.recording_output_path)
+    results = []
+
+    if not recording_path.exists():
+        return results
+
+    for json_path in recording_path.rglob("*.json"):
+        try:
+            meta = json.loads(json_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        # Find video file
+        video_path = _find_video_for_sidecar(json_path, meta, recording_path)
+        if video_path is None:
+            continue
+
+        start_time = meta.get("start_time", "")
+        end_time = meta.get("end_time", "")
+        duration = meta.get("duration_seconds", 0)
+        frame_count = meta.get("frame_count", 0)
+        locked = bool(meta.get("locked", False))
+        size_bytes = video_path.stat().st_size if video_path.exists() else 0
+
+        # Build a stable ID from the sidecar path relative to recording_path
+        try:
+            rel = json_path.relative_to(recording_path)
+            rec_id = str(rel.with_suffix("")).replace("\\", "/")
+        except ValueError:
+            rec_id = json_path.stem
+
+        results.append({
+            "id": rec_id,
+            "start_time": start_time,
+            "end_time": end_time,
+            "duration_seconds": round(duration, 1),
+            "frame_count": frame_count,
+            "locked": locked,
+            "size_bytes": size_bytes,
+            "size_mb": round(size_bytes / (1024 * 1024), 1),
+            "video_path": str(video_path),
+            "json_path": str(json_path),
+            "filename": video_path.name,
+            "date_dir": json_path.parent.name,
+        })
+
+    # Sort newest first by start_time
+    results.sort(key=lambda r: r["start_time"], reverse=True)
+    return results
+
+
+def _find_video_for_sidecar(json_path: Path, meta: dict, recording_path: Path):
+    """Find the video file corresponding to a sidecar JSON."""
+    file_path = meta.get("file_path")
+    if file_path:
+        candidate = Path(file_path)
+        if candidate.exists():
+            return candidate
+        candidate = recording_path / candidate.name
+        if candidate.exists():
+            return candidate
+
+    for ext in (".mp4", ".avi", ".mkv"):
+        candidate = json_path.with_suffix(ext)
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _resolve_recording_path(rec_id: str) -> tuple:
+    """Resolve a recording ID to (json_path, video_path, recording_path) safely.
+
+    Returns (None, None, None) if invalid or path traversal detected.
+    """
+    cfg = _load_config()
+    recording_path = Path(cfg.recording_output_path).resolve()
+    json_path = (recording_path / (rec_id + ".json")).resolve()
+
+    # Prevent path traversal
+    try:
+        json_path.relative_to(recording_path)
+    except ValueError:
+        return None, None, None
+
+    if not json_path.exists():
+        return None, None, None
+
+    try:
+        meta = json.loads(json_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None, None, None
+
+    video_path = _find_video_for_sidecar(json_path, meta, recording_path)
+    return json_path, video_path, recording_path
+
+
+@app.route("/recordings")
+def recordings_page():
+    """Browse continuous recording segments."""
+    date_filter = request.args.get("date", "").strip()
+    recordings = _list_all_recordings()
+
+    if date_filter:
+        recordings = [r for r in recordings if r["date_dir"] == date_filter]
+
+    # Collect available dates for filter
+    all_recordings = _list_all_recordings() if date_filter else recordings
+    dates = sorted(set(r["date_dir"] for r in all_recordings), reverse=True)
+
+    return render_template(
+        "recordings.html",
+        recordings=recordings,
+        dates=dates,
+        current_date=date_filter,
+    )
+
+
+@app.route("/recordings/list")
+def recordings_list_api():
+    """Return recording segments as JSON."""
+    date_filter = request.args.get("date", "").strip()
+    recordings = _list_all_recordings()
+    if date_filter:
+        recordings = [r for r in recordings if r["date_dir"] == date_filter]
+    return jsonify({"recordings": recordings, "count": len(recordings)})
+
+
+@app.route("/recordings/video/<path:rec_id>")
+def recordings_serve_video(rec_id):
+    """Serve a recording MP4 file safely."""
+    cfg = _load_config()
+    recording_path = Path(cfg.recording_output_path).resolve()
+
+    # rec_id is like "2026-05-04/14-30-00" — map to the video file
+    # Try common extensions
+    for ext in (".mp4", ".avi", ".mkv"):
+        candidate = (recording_path / (rec_id + ext)).resolve()
+        try:
+            candidate.relative_to(recording_path)
+        except ValueError:
+            return "Forbidden", 403
+        if candidate.exists():
+            return send_file(str(candidate))
+
+    return "Not found", 404
+
+
+@app.route("/recordings/lock", methods=["POST"])
+def recordings_lock():
+    """Set locked=true on a recording sidecar."""
+    rec_id = request.form.get("id") or (request.get_json() or {}).get("id", "")
+    if not rec_id:
+        return jsonify({"ok": False, "error": "Missing recording id"}), 400
+
+    json_path, video_path, recording_path = _resolve_recording_path(rec_id)
+    if json_path is None:
+        return jsonify({"ok": False, "error": "Recording not found"}), 404
+
+    try:
+        meta = json.loads(json_path.read_text())
+        meta["locked"] = True
+        json_path.write_text(json.dumps(meta, indent=2))
+    except (json.JSONDecodeError, OSError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+    return jsonify({"ok": True, "locked": True, "id": rec_id})
+
+
+@app.route("/recordings/unlock", methods=["POST"])
+def recordings_unlock():
+    """Set locked=false on a recording sidecar."""
+    rec_id = request.form.get("id") or (request.get_json() or {}).get("id", "")
+    if not rec_id:
+        return jsonify({"ok": False, "error": "Missing recording id"}), 400
+
+    json_path, video_path, recording_path = _resolve_recording_path(rec_id)
+    if json_path is None:
+        return jsonify({"ok": False, "error": "Recording not found"}), 404
+
+    try:
+        meta = json.loads(json_path.read_text())
+        meta["locked"] = False
+        json_path.write_text(json.dumps(meta, indent=2))
+    except (json.JSONDecodeError, OSError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+    return jsonify({"ok": True, "locked": False, "id": rec_id})
+
+
+@app.route("/recordings/delete", methods=["POST"])
+def recordings_delete():
+    """Delete an unlocked recording segment and its sidecar."""
+    rec_id = request.form.get("id") or (request.get_json() or {}).get("id", "")
+    if not rec_id:
+        return jsonify({"ok": False, "error": "Missing recording id"}), 400
+
+    json_path, video_path, recording_path = _resolve_recording_path(rec_id)
+    if json_path is None:
+        return jsonify({"ok": False, "error": "Recording not found"}), 404
+
+    # Check locked status
+    try:
+        meta = json.loads(json_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return jsonify({"ok": False, "error": "Could not read sidecar"}), 500
+
+    if meta.get("locked"):
+        return jsonify({"ok": False, "error": "Recording is locked. Unlock it first."}), 409
+
+    freed = 0
+    if video_path and video_path.exists():
+        freed += video_path.stat().st_size
+        video_path.unlink()
+
+    if json_path.exists():
+        freed += json_path.stat().st_size
+        json_path.unlink()
+
+    # Remove empty parent date directory
+    parent = json_path.parent
+    try:
+        if parent.resolve() != recording_path and parent.exists() and not any(parent.iterdir()):
+            parent.rmdir()
+    except OSError:
+        pass
+
+    return jsonify({"ok": True, "id": rec_id, "bytes_freed": freed})
+
+
 @app.route("/config", methods=["GET", "POST"])
 def config_page():
     error: Optional[str] = None

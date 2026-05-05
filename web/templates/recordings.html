@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Recordings — Car Incident Logger{% endblock %}
+
+{% block content %}
+<h1>Recordings</h1>
+
+<div class="recordings-toolbar">
+  <form class="date-filter" method="get" action="{{ url_for('recordings_page') }}">
+    <label for="date-select">Date:</label>
+    <select name="date" id="date-select" onchange="this.form.submit()">
+      <option value="">All dates</option>
+      {% for d in dates %}
+      <option value="{{ d }}" {% if d == current_date %}selected{% endif %}>{{ d }}</option>
+      {% endfor %}
+    </select>
+  </form>
+  <div class="recordings-count muted">{{ recordings|length }} segment{{ 's' if recordings|length != 1 else '' }}</div>
+</div>
+
+{% if recordings %}
+<table class="recordings-table">
+  <thead>
+    <tr>
+      <th>Date / Time</th>
+      <th>Duration</th>
+      <th>Frames</th>
+      <th>Size</th>
+      <th>Status</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for rec in recordings %}
+    <tr id="row-{{ loop.index }}" data-id="{{ rec.id }}">
+      <td class="mono">
+        {{ rec.date_dir }} {{ rec.filename | replace('.mp4','') | replace('-',':') }}
+      </td>
+      <td>{{ rec.duration_seconds }}s</td>
+      <td>{{ rec.frame_count }}</td>
+      <td>{{ rec.size_mb }} MB</td>
+      <td>
+        <span class="badge {{ 'badge-locked' if rec.locked else 'badge-grey' }}" id="lock-badge-{{ loop.index }}">
+          {{ 'Locked' if rec.locked else 'Unlocked' }}
+        </span>
+      </td>
+      <td class="rec-actions">
+        <button class="btn btn-sm" onclick="playRecording('{{ rec.id }}')" title="Play">Play</button>
+        {% if rec.locked %}
+        <button class="btn btn-sm btn-secondary" onclick="toggleLock('{{ rec.id }}', false, {{ loop.index }})" title="Unlock">Unlock</button>
+        {% else %}
+        <button class="btn btn-sm" onclick="toggleLock('{{ rec.id }}', true, {{ loop.index }})" title="Lock">Lock</button>
+        {% endif %}
+        <button class="btn btn-sm btn-danger" onclick="deleteRecording('{{ rec.id }}', {{ loop.index }})"
+                {% if rec.locked %}disabled title="Unlock first"{% else %}title="Delete"{% endif %}>Delete</button>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No recordings found{{ ' for ' + current_date if current_date else '' }}. Start the camera to begin continuous recording.</p>
+{% endif %}
+
+<div id="player-modal" class="player-modal hidden">
+  <div class="player-backdrop" onclick="closePlayer()"></div>
+  <div class="player-content">
+    <div class="player-header">
+      <span id="player-title">Recording</span>
+      <button class="btn btn-sm btn-secondary" onclick="closePlayer()">Close</button>
+    </div>
+    <video id="player-video" controls autoplay class="player-video">
+      Your browser does not support HTML5 video.
+    </video>
+  </div>
+</div>
+
+<script>
+function playRecording(id) {
+  var modal = document.getElementById('player-modal');
+  var video = document.getElementById('player-video');
+  var title = document.getElementById('player-title');
+  video.src = '/recordings/video/' + encodeURI(id);
+  title.textContent = id;
+  modal.classList.remove('hidden');
+}
+
+function closePlayer() {
+  var modal = document.getElementById('player-modal');
+  var video = document.getElementById('player-video');
+  video.pause();
+  video.src = '';
+  modal.classList.add('hidden');
+}
+
+function toggleLock(id, lock, rowIdx) {
+  var url = lock ? '/recordings/lock' : '/recordings/unlock';
+  fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id: id})
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.ok) {
+      location.reload();
+    } else {
+      alert('Error: ' + (d.error || 'unknown'));
+    }
+  })
+  .catch(function(e) { alert('Request failed: ' + e); });
+}
+
+function deleteRecording(id, rowIdx) {
+  if (!confirm('Delete recording ' + id + '? This cannot be undone.')) return;
+  fetch('/recordings/delete', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id: id})
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.ok) {
+      var row = document.getElementById('row-' + rowIdx);
+      if (row) row.remove();
+    } else {
+      alert('Error: ' + (d.error || 'unknown'));
+    }
+  })
+  .catch(function(e) { alert('Request failed: ' + e); });
+}
+</script>
+{% endblock %}

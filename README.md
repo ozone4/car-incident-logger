@@ -374,11 +374,24 @@ python web/app.py --host 0.0.0.0 --port 8080
 |-----|-------------|
 | `/` | Dashboard — camera status, ALPR status, live plate detection controls, + 10 most recent incidents |
 | `/camera` | Live MJPEG camera preview with start/stop controls |
+| `/recordings` | Browse, play, lock/unlock, and delete continuous recording segments |
 | `/incidents` | All incidents; search by partial plate (e.g. `WJ`) |
 | `/incidents/<PLATE>` | Per-plate incident history |
 | `/config` | View and edit camera device, resolution, FPS, buffer duration |
 
 The camera preview on `/camera` is independent of the main logger — you can start/stop it to test your camera without running `main.py`.
+
+### Recordings browser
+
+The `/recordings` page lets you browse continuous recording segments written by the loop recorder.
+
+- **View**: Segments are listed newest-first with date, duration, frame count, file size, and lock status. Use the date dropdown to filter by day.
+- **Play**: Click **Play** to open an inline HTML5 video player for any segment.
+- **Lock**: Click **Lock** to protect a segment from automatic storage cleanup. Locked segments show a yellow "Locked" badge.
+- **Unlock**: Click **Unlock** to remove protection. The segment becomes eligible for cleanup again.
+- **Delete**: Click **Delete** to permanently remove an unlocked segment and its sidecar. Locked segments must be unlocked first.
+
+The dashboard's Continuous Recording card also links directly to the recordings browser.
 
 ### Live ALPR from the dashboard
 

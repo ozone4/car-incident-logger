@@ -287,3 +287,89 @@ tr:hover td { background: rgba(255,255,255,0.02); }
   padding: 0.55rem 0.7rem;
 }
 .sighting-row .badge { margin-left: 0.4rem; }
+
+/* ── Recordings browser ─────────────────────────────────────────────────── */
+.recordings-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.date-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.date-filter select {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 0.35em 0.6em;
+  font-size: 0.9rem;
+}
+
+.recordings-count { font-size: 0.85rem; }
+
+.recordings-table .rec-actions {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.btn-sm {
+  padding: 0.2em 0.6em;
+  font-size: 0.8rem;
+}
+
+.badge-locked {
+  background: rgba(224, 168, 50, 0.15);
+  color: var(--yellow);
+}
+
+.badge-red { background: rgba(224, 82, 82, 0.15); color: var(--red); }
+.badge-yellow { background: rgba(224, 168, 50, 0.15); color: var(--yellow); }
+
+/* ── Video player modal ─────────────────────────────────────────────────── */
+.player-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.player-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+}
+
+.player-content {
+  position: relative;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  max-width: 900px;
+  width: 90%;
+}
+
+.player-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--text-dim);
+}
+
+.player-video {
+  width: 100%;
+  border-radius: var(--radius);
+  background: #000;
+}

@@ -23,6 +23,12 @@
       </a>
     </li>
     <li>
+      <a href="{{ url_for('recordings_page') }}"
+         {% if request.endpoint == 'recordings_page' %}class="active"{% endif %}>
+        Recordings
+      </a>
+    </li>
+    <li>
       <a href="{{ url_for('incidents_page') }}"
          {% if request.endpoint in ('incidents_page', 'plate_detail') %}class="active"{% endif %}>
         Incidents
