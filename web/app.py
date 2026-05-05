@@ -40,11 +40,13 @@ from modules.camera_capture import CameraCapture  # noqa: E402
 from modules.alpr_runner import ALPRRunner  # noqa: E402
 from modules.config_manager import ConfigManager  # noqa: E402
 from modules.dashcam import DashcamRecorder  # noqa: E402
+from modules.health_monitor import HealthMonitor  # noqa: E402
 from modules.loop_recorder import LoopRecorder  # noqa: E402
 from modules.incident_trigger import WebTrigger  # noqa: E402
 from modules.multi_frame_voter import MultiFrameVoter  # noqa: E402
 from modules.plate_database import PlateDatabase  # noqa: E402
 from modules.rolling_buffer import RollingBuffer  # noqa: E402
+from modules.storage_manager import StorageManager  # noqa: E402
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -88,6 +90,10 @@ _loop_recorder: Optional[LoopRecorder] = None
 _dashcam: Optional[DashcamRecorder] = None
 _dashcam_buffer: Optional[RollingBuffer] = None
 _web_trigger = WebTrigger()
+
+# ── Storage + health state ──────────────────────────────────────────────────
+_storage_manager: Optional[StorageManager] = None
+_health_monitor: Optional[HealthMonitor] = None
 
 
 # ── Config helpers ────────────────────────────────────────────────────────────
@@ -739,6 +745,37 @@ def _stop_loop_recorder() -> None:
     logger.info("Loop recorder stopped")
 
 
+# ── Storage manager management ─────────────────────────────────────────────
+
+def _start_storage_manager() -> None:
+    """Start the storage manager for periodic cleanup of old recordings."""
+    global _storage_manager, _health_monitor
+    cfg = _load_config()
+    recording_path = cfg.recording_output_path
+
+    if _storage_manager is None or not _storage_manager.is_running:
+        _storage_manager = StorageManager(
+            recording_path=recording_path,
+            max_recording_age_days=cfg.storage_max_recording_age_days,
+            min_free_space_gb=cfg.storage_min_free_space_gb,
+            cleanup_interval_seconds=cfg.storage_cleanup_interval_seconds,
+        )
+        _storage_manager.start()
+
+    if _health_monitor is None:
+        _health_monitor = HealthMonitor(
+            recording_path=recording_path,
+            min_free_space_gb=cfg.storage_min_free_space_gb,
+        )
+
+
+def _stop_storage_manager() -> None:
+    global _storage_manager
+    if _storage_manager is not None:
+        _storage_manager.stop()
+        _storage_manager = None
+
+
 # ── Loop recorder routes ────────────────────────────────────────────────────
 
 @app.route("/recording/status")
@@ -792,6 +829,52 @@ def dashcam_clip_file(subpath):
     if not candidate.exists():
         return "Not found", 404
     return send_file(str(candidate))
+
+
+# ── Health + Storage routes ─────────────────────────────────────────────────
+
+@app.route("/health")
+def health_api():
+    """Return composite system health status as JSON."""
+    if _health_monitor is None:
+        # Lazy init if not yet started
+        _start_storage_manager()
+
+    cam_running = _camera_status().get("running", False)
+    dashcam_armed = _web_trigger.is_armed if _web_trigger else False
+    rec_status = _loop_recorder.status() if _loop_recorder else {}
+
+    with _alpr_lock:
+        alpr = dict(_alpr_state)
+
+    stor_status = _storage_manager.status() if _storage_manager else None
+
+    result = _health_monitor.check(
+        camera_running=cam_running,
+        dashcam_buffer_armed=dashcam_armed,
+        loop_recorder_status=rec_status,
+        alpr_state=alpr,
+        storage_status=stor_status,
+    )
+    return jsonify(result)
+
+
+@app.route("/storage/status")
+def storage_status_api():
+    """Return storage manager status as JSON."""
+    if _storage_manager is None:
+        return jsonify({"running": False})
+    return jsonify(_storage_manager.status())
+
+
+@app.route("/storage/cleanup", methods=["POST"])
+def storage_cleanup_api():
+    """Trigger a manual storage cleanup pass."""
+    if _storage_manager is None:
+        _start_storage_manager()
+    dry_run = request.args.get("dry_run", "false").lower() in ("true", "1", "yes")
+    result = _storage_manager.run_cleanup(dry_run=dry_run)
+    return jsonify(result)
 
 
 @app.route("/config", methods=["GET", "POST"])
@@ -882,6 +965,9 @@ def _auto_start_dashcam_services() -> None:
     except Exception as exc:  # noqa: BLE001
         logger.warning("Auto-start skipped; config unavailable: %s", exc)
         return
+
+    # Always start storage manager (cleanup runs regardless of camera state)
+    _start_storage_manager()
 
     if cfg.dashcam_auto_start_camera:
         result = _start_camera()

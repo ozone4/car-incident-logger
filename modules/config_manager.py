@@ -106,6 +106,18 @@ class ConfigManager:
         return int(self.get("storage", "max_incident_age_days", default=90))
 
     @property
+    def storage_max_recording_age_days(self) -> float:
+        return float(self.get("storage", "max_recording_age_days", default=7))
+
+    @property
+    def storage_min_free_space_gb(self) -> float:
+        return float(self.get("storage", "min_free_space_gb", default=2))
+
+    @property
+    def storage_cleanup_interval_seconds(self) -> float:
+        return float(self.get("storage", "cleanup_interval_seconds", default=300))
+
+    @property
     def alpr_enabled(self) -> bool:
         return bool(self.get("alpr", "enabled", default=False))
 

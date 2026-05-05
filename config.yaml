@@ -28,6 +28,9 @@ button:
 storage:
   base_path: ./data
   max_incident_age_days: 90
+  max_recording_age_days: 7       # auto-delete recordings older than this
+  min_free_space_gb: 2            # delete oldest recordings when free space drops below
+  cleanup_interval_seconds: 300   # how often to check (seconds)
 
 alpr:
   enabled: false

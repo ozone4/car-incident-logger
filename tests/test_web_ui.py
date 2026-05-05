@@ -215,3 +215,31 @@ def test_plate_sightings_expire_to_recent_history():
     assert rows[0]["plate"] == "634XSG"
     assert rows[0]["active"] is False
     assert rows[0]["status"] == "gone"
+
+
+# ── Health + Storage route tests ─────────────────────────────────────────────
+
+def test_health_endpoint_returns_json(client):
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert "status" in data
+    assert data["status"] in ("green", "yellow", "red", "grey")
+    assert "issues" in data
+    assert "components" in data
+    assert "disk" in data
+
+
+def test_storage_status_endpoint(client):
+    resp = client.get("/storage/status")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert "running" in data
+
+
+def test_storage_cleanup_dry_run(client):
+    resp = client.post("/storage/cleanup?dry_run=true")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["dry_run"] is True
+    assert "deleted_count" in data

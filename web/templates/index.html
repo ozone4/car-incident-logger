@@ -28,6 +28,42 @@
   </div>
 </div>
 
+<div class="status-card" id="health-card" style="margin-top:16px">
+  <div class="label">System Health</div>
+  <div id="health-status" class="badge badge-grey">Checking...</div>
+  <div id="health-issues" style="font-size:0.9em;color:#888;margin-top:4px"></div>
+  <div id="health-disk" style="font-size:0.85em;margin-top:4px"></div>
+</div>
+
+<script>
+function refreshHealth() {
+  fetch('/health')
+    .then(r => r.json())
+    .then(function(d) {
+      var status = document.getElementById('health-status');
+      var issues = document.getElementById('health-issues');
+      var disk = document.getElementById('health-disk');
+
+      var colorMap = {green: 'badge-green', yellow: 'badge-yellow', red: 'badge-red', grey: 'badge-grey'};
+      status.textContent = d.status.toUpperCase();
+      status.className = 'badge ' + (colorMap[d.status] || 'badge-grey');
+
+      if (d.issues && d.issues.length) {
+        issues.innerHTML = d.issues.map(function(i){ return '<div style="color:#c33">⚠ ' + escapeHtml(i) + '</div>'; }).join('');
+      } else {
+        issues.innerHTML = '<span style="color:#393">All systems nominal</span>';
+      }
+
+      if (d.disk) {
+        disk.textContent = 'Disk: ' + d.disk.free_gb + ' GB free / ' + d.disk.total_gb + ' GB total (' + d.disk.percent_used + '% used)';
+      }
+    })
+    .catch(function(){ });
+}
+refreshHealth();
+setInterval(refreshHealth, 5000);
+</script>
+
 <div class="status-card" id="recording-card" style="margin-top:16px">
   <div class="label">Continuous Recording</div>
   <div id="rec-status" class="badge badge-grey">Checking...</div>
