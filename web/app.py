@@ -539,12 +539,16 @@ def _generate_frames():
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route("/")
-@app.route("/dashboard")
 def index():
     db = _get_db()
     incidents = db.get_all_incidents(limit=10) if db else []
     _decode_metadata(incidents)
     return render_template("index.html", incidents=incidents, camera=_camera_status())
+
+
+@app.route("/dashboard")
+def dashboard():
+    return render_template("dashboard.html")
 
 
 @app.route("/camera")
@@ -668,6 +672,16 @@ def plate_detail(plate):
         incidents=incidents,
         plate_info=plate_info,
     )
+
+
+@app.route("/incidents/json")
+def incidents_json():
+    """Return recent incidents as JSON for the live dashboard."""
+    limit = request.args.get("limit", 10, type=int)
+    db = _get_db()
+    incidents = db.get_all_incidents(limit=limit) if db else []
+    _decode_metadata(incidents)
+    return jsonify(incidents=incidents)
 
 
 @app.route("/media")
