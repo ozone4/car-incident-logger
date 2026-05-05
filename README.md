@@ -306,12 +306,15 @@ car-incident-logger/
 │   ├── plate_database.py        # SQLite plates/incidents/sightings
 │   ├── notifier.py              # Console + chime alerts
 │   ├── dashcam.py               # Dashcam incident capture from rolling buffer
+│   ├── loop_recorder.py         # Continuous loop recording to disk in segments
+│   ├── overlay.py               # Timestamp overlay for recorded frames
 │   ├── incident_trigger.py      # Abstract trigger interface (web, hardware, ALPR)
 │   ├── alpr_runner.py           # Phase 2: YOLO+PaddleOCR pipeline (deps optional)
 │   ├── multi_frame_voter.py     # Phase 2: aggregate candidates across frames
 │   └── live_matcher.py          # Phase 2 stub: background known-plate alerting
 ├── data/
 │   ├── plates/                  # Per-plate incident folders
+│   ├── recordings/              # Continuous loop recording segments (by date)
 │   ├── unresolved/              # Incidents with no parsed plate
 │   ├── models/                  # Whisper model cache
 │   ├── logs/                    # Rotating system log
@@ -326,6 +329,7 @@ car-incident-logger/
     ├── test_phonetic_parser.py
     ├── test_plate_database.py
     ├── test_web_ui.py
+    ├── test_loop_recorder.py    # Loop recorder, overlay, and recording config tests
     └── test_alpr.py             # ALPR utils + voter tests (no heavy deps needed)
 ```
 
@@ -454,6 +458,68 @@ ffmpeg is recommended for H.264/MP4 output. Without it, clips are saved as AVI (
 winget install ffmpeg
 
 # Or download from https://ffmpeg.org/download.html and add to PATH
+```
+
+---
+
+## Continuous Loop Recording
+
+The system can continuously record video to disk in rotating segments, like a real dashcam. Recordings are organized by date and include sidecar JSON metadata.
+
+### How it works
+
+When the camera starts (either manually or via auto-start), the loop recorder automatically begins writing video segments to disk. Each segment is a fixed duration (default: 60 seconds). When a segment completes, a new one starts seamlessly. A timestamp overlay is burned into recorded frames at encode time — ALPR sees clean, unmodified frames.
+
+Segments are written to a temp file first, then renamed on completion for crash safety.
+
+### Generated files
+
+```
+data/recordings/
+  2026-05-04/
+    14-30-00.mp4          # 60-second video segment
+    14-30-00.json         # sidecar metadata (start/end time, frame count, locked flag)
+    14-31-00.mp4
+    14-31-00.json
+    ...
+```
+
+### Configuration
+
+```yaml
+recording:
+  enabled: true                    # enable/disable continuous recording
+  segment_duration_seconds: 60     # length of each segment
+  output_path: ./data/recordings   # where segments are saved
+
+overlay:
+  enabled: true                    # burn timestamp into recorded frames
+  position: bottom-left            # top-left, top-right, bottom-left, bottom-right
+  font_scale: 0.7
+  color: [255, 255, 255]           # white BGR
+  background: true                 # dark rectangle behind text for readability
+```
+
+### Dashboard status
+
+The web dashboard shows a **Continuous Recording** card with a red REC indicator when active. It displays the current segment name, frame count, and number of completed segments.
+
+The recording status is also available via the `/recording/status` JSON endpoint.
+
+### Windows usage
+
+```powershell
+# Start the web UI — recording starts automatically with the camera
+python web/app.py
+```
+
+Recordings are saved to `data\recordings\` by default. To change the path, edit `recording.output_path` in `config.yaml`. Use forward slashes or `./` relative paths for cross-platform compatibility.
+
+To disable continuous recording while keeping the camera active:
+
+```yaml
+recording:
+  enabled: false
 ```
 
 ---

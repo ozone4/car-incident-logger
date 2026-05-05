@@ -28,6 +28,40 @@
   </div>
 </div>
 
+<div class="status-card" id="recording-card" style="margin-top:16px">
+  <div class="label">Continuous Recording</div>
+  <div id="rec-status" class="badge badge-grey">Checking...</div>
+  <div id="rec-detail" style="font-size:0.9em;color:#888;margin-top:4px"></div>
+</div>
+
+<script>
+function refreshRecording() {
+  fetch('/recording/status')
+    .then(r => r.json())
+    .then(function(d) {
+      var status = document.getElementById('rec-status');
+      var detail = document.getElementById('rec-detail');
+      if (d.recording) {
+        status.innerHTML = '<span style="color:#c00">&#9679;</span> REC';
+        status.className = 'badge badge-green';
+        var bits = [];
+        if (d.current_segment) bits.push('segment: ' + d.current_segment.split('/').pop());
+        bits.push('frames: ' + (d.frames_in_segment || 0));
+        bits.push('completed: ' + (d.segments_completed || 0) + ' segments');
+        if (d.overlay_enabled) bits.push('overlay on');
+        detail.textContent = bits.join(' · ');
+      } else {
+        status.textContent = d.enabled === false ? 'Disabled' : 'Stopped';
+        status.className = 'badge badge-grey';
+        detail.textContent = d.last_error || (d.enabled === false ? 'Enable in config to start recording.' : 'Start camera to begin recording.');
+      }
+    })
+    .catch(function(){ });
+}
+refreshRecording();
+setInterval(refreshRecording, 2000);
+</script>
+
 <div class="status-card" id="live-alpr-card" style="margin-top:16px">
   <div class="label">Live Plate Detection</div>
   <div id="live-alpr-status" class="badge badge-grey">Stopped</div>

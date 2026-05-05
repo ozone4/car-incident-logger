@@ -58,6 +58,18 @@ known_vehicles:
       min_score: 0.75
       min_matched_traits: 3
 
+recording:
+  enabled: true
+  segment_duration_seconds: 60    # segment length in seconds
+  output_path: ./data/recordings
+
+overlay:
+  enabled: true
+  position: bottom-left           # top-left, top-right, bottom-left, bottom-right
+  font_scale: 0.7
+  color: [255, 255, 255]          # white BGR
+  background: true                # dark rectangle behind text
+
 dashcam:
   auto_start_camera: true     # start camera/buffer when web app starts
   auto_start_alpr: true       # start Live ALPR automatically when available

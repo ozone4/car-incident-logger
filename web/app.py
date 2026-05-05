@@ -40,6 +40,7 @@ from modules.camera_capture import CameraCapture  # noqa: E402
 from modules.alpr_runner import ALPRRunner  # noqa: E402
 from modules.config_manager import ConfigManager  # noqa: E402
 from modules.dashcam import DashcamRecorder  # noqa: E402
+from modules.loop_recorder import LoopRecorder  # noqa: E402
 from modules.incident_trigger import WebTrigger  # noqa: E402
 from modules.multi_frame_voter import MultiFrameVoter  # noqa: E402
 from modules.plate_database import PlateDatabase  # noqa: E402
@@ -79,6 +80,9 @@ _alpr_state: dict = {
 
 SIGHTING_ACTIVE_TIMEOUT_SECONDS = 5.0
 SIGHTING_HISTORY_LIMIT = 30
+
+# ── Loop recorder state ─────────────────────────────────────────────────────
+_loop_recorder: Optional[LoopRecorder] = None
 
 # ── Dashcam state ───────────────────────────────────────────────────────────
 _dashcam: Optional[DashcamRecorder] = None
@@ -127,12 +131,14 @@ def _start_camera() -> dict:
         _camera.start()
     logger.info("Camera preview started")
     _start_dashcam_buffer()
+    _start_loop_recorder()
     return {"status": "started"}
 
 
 def _stop_camera() -> dict:
     global _camera
     _alpr_stop_event.set()
+    _stop_loop_recorder()
     _stop_dashcam_buffer()
     with _camera_lock:
         if _camera is None or not _camera.is_running:
@@ -695,6 +701,52 @@ def alpr_live_start_api():
 @app.route("/alpr/live/stop", methods=["POST"])
 def alpr_live_stop_api():
     return jsonify(_stop_live_alpr())
+
+
+# ── Loop recorder management ────────────────────────────────────────────────
+
+def _start_loop_recorder() -> None:
+    """Start continuous loop recording if enabled in config."""
+    global _loop_recorder
+    cfg = _load_config()
+    if not cfg.recording_enabled:
+        return
+    with _camera_lock:
+        cam = _camera
+    if cam is None or not cam.is_running:
+        return
+    if _loop_recorder is not None and _loop_recorder.is_recording:
+        return
+    _loop_recorder = LoopRecorder(
+        output_path=cfg.recording_output_path,
+        segment_duration_seconds=cfg.recording_segment_duration,
+        fps=cfg.camera_fps,
+        overlay_enabled=cfg.overlay_enabled,
+        overlay_position=cfg.overlay_position,
+        overlay_font_scale=cfg.overlay_font_scale,
+        overlay_color=tuple(cfg.overlay_color),
+        overlay_background=cfg.overlay_background,
+    )
+    _loop_recorder.start(cam)
+    logger.info("Loop recorder started")
+
+
+def _stop_loop_recorder() -> None:
+    global _loop_recorder
+    if _loop_recorder is not None:
+        _loop_recorder.stop()
+        _loop_recorder = None
+    logger.info("Loop recorder stopped")
+
+
+# ── Loop recorder routes ────────────────────────────────────────────────────
+
+@app.route("/recording/status")
+def recording_status_api():
+    """Return loop recorder status as JSON."""
+    if _loop_recorder is None:
+        return jsonify({"recording": False, "enabled": _load_config().recording_enabled})
+    return jsonify(_loop_recorder.status())
 
 
 # ── Dashcam routes ───────────────────────────────────────────────────────────

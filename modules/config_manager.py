@@ -157,6 +157,43 @@ class ConfigManager:
     def dashcam_auto_start_alpr(self) -> bool:
         return bool(self.get("dashcam", "auto_start_alpr", default=True))
 
+    # ── Recording ────────────────────────────────────────────────────────────
+
+    @property
+    def recording_enabled(self) -> bool:
+        return bool(self.get("recording", "enabled", default=True))
+
+    @property
+    def recording_segment_duration(self) -> int:
+        return int(self.get("recording", "segment_duration_seconds", default=60))
+
+    @property
+    def recording_output_path(self) -> Path:
+        return Path(self.get("recording", "output_path", default="./data/recordings"))
+
+    # ── Overlay ─────────────────────────────────────────────────────────────
+
+    @property
+    def overlay_enabled(self) -> bool:
+        return bool(self.get("overlay", "enabled", default=True))
+
+    @property
+    def overlay_position(self) -> str:
+        return str(self.get("overlay", "position", default="bottom-left"))
+
+    @property
+    def overlay_font_scale(self) -> float:
+        return float(self.get("overlay", "font_scale", default=0.7))
+
+    @property
+    def overlay_color(self) -> list:
+        c = self.get("overlay", "color", default=[255, 255, 255])
+        return list(c) if isinstance(c, (list, tuple)) else [255, 255, 255]
+
+    @property
+    def overlay_background(self) -> bool:
+        return bool(self.get("overlay", "background", default=True))
+
     @property
     def notifier_chime_enabled(self) -> bool:
         return bool(self.get("notifier", "chime_enabled", default=False))
