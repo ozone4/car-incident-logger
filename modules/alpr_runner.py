@@ -644,6 +644,8 @@ class ALPRRunner:
                             "plate": plate,
                             "confidence": round(combined, 3),
                             "bbox": box["bbox"],
+                            "frame_w": frame.shape[1],
+                            "frame_h": frame.shape[0],
                             "source": "yolo+paddle",
                             "raw_text": raw_text,
                             "corrected": corrected,
@@ -667,6 +669,8 @@ class ALPRRunner:
                         "plate": plate,
                         "confidence": round(ocr_conf * 0.7, 3),  # penalty for no detector
                         "bbox": None,
+                        "frame_w": frame.shape[1],
+                        "frame_h": frame.shape[0],
                         "source": "paddle_fullframe",
                         "raw_text": raw_text,
                         "corrected": corrected,

@@ -315,6 +315,8 @@ def _new_sighting(plate: str, det: dict, now: float) -> dict:
         "confidence": float(det.get("confidence", 0.0)),
         "best_confidence": float(det.get("confidence", 0.0)),
         "bbox": det.get("bbox"),
+        "frame_w": det.get("frame_w"),
+        "frame_h": det.get("frame_h"),
         "source": det.get("source"),
         "first_seen": now,
         "last_seen": now,
@@ -334,6 +336,8 @@ def _serialize_sighting(sighting: dict, now: float) -> dict:
         "confidence": round(float(sighting.get("confidence", 0.0)), 3),
         "best_confidence": round(float(sighting.get("best_confidence", 0.0)), 3),
         "bbox": sighting.get("bbox"),
+        "frame_w": sighting.get("frame_w"),
+        "frame_h": sighting.get("frame_h"),
         "source": sighting.get("source"),
         "first_seen": first_seen,
         "last_seen": last_seen,
@@ -369,6 +373,9 @@ def _update_plate_sightings(detections: list[dict], now: float) -> tuple[dict, l
             )
             sighting["raw_text"] = (det.get("raw_text") or sighting.get("raw_text") or "").strip()
             sighting["bbox"] = det.get("bbox") or sighting.get("bbox")
+            if det.get("frame_w"):
+                sighting["frame_w"] = det["frame_w"]
+                sighting["frame_h"] = det["frame_h"]
             sighting["source"] = det.get("source") or sighting.get("source")
             sighting["active"] = True
 
@@ -442,6 +449,10 @@ def _live_alpr_loop() -> None:
             _alpr_state["frames_scanned"] = int(_alpr_state.get("frames_scanned", 0)) + 1
             _alpr_state["detections_seen"] = int(_alpr_state.get("detections_seen", 0)) + len(detections)
             _alpr_state["latest"] = latest
+            if best and best.get("plate") and _active:
+                sighting = _active.get(best["plate"])
+                if sighting:
+                    best = {**best, "bbox": sighting.get("bbox"), "frame_w": sighting.get("frame_w"), "frame_h": sighting.get("frame_h")}
             _alpr_state["best"] = best
             _alpr_state["sightings"] = sightings
             _alpr_state["error"] = None

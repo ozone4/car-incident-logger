@@ -335,12 +335,12 @@ body {
 
 /* Overlays — military targeting */
 .alpr-box {
-  position: absolute; left: 50%; bottom: 38%;
-  transform: translate(-50%, 50%);
-  width: 200px; height: 130px;
+  position: absolute;
   border: 1.5px solid var(--accent);
   pointer-events: none;
   box-shadow: 0 0 0 1px rgba(0,0,0,.5), 0 0 24px var(--accent-glow);
+  transition: left 0.12s ease-out, top 0.12s ease-out,
+              width 0.12s ease-out, height 0.12s ease-out;
 }
 .alpr-box::before, .alpr-box::after {
   content: ""; position: absolute; width: 12px; height: 12px;
@@ -348,6 +348,13 @@ body {
 }
 .alpr-box::before { top: -3px; left: -3px;  border-right: 0; border-bottom: 0; }
 .alpr-box::after  { top: -3px; right: -3px; border-left: 0;  border-bottom: 0; }
+.alpr-box--locked {
+  border-color: #5dce8f;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.5), 0 0 24px rgba(93,206,143,.4);
+}
+.alpr-box--locked::before,
+.alpr-box--locked::after { border-color: #5dce8f; }
+.alpr-box--locked .alpr-tag { background: #5dce8f; color: #0d1117; }
 .alpr-tag {
   position: absolute; left: 0; top: -22px;
   display: inline-flex; align-items: center; gap: 6px;

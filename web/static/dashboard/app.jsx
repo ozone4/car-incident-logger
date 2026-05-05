@@ -172,14 +172,26 @@ function CameraViewport({ overlays = true, frozen = false, best = null }) {
 
       {overlays && (
         <>
-          {best && best.plate && (
-            <div className="alpr-box">
-              <span className="alpr-tag">
-                <span className="alpr-pulse"></span>
-                {best.plate}&nbsp;<span className="alpr-conf">{Math.round((best.confidence || 0) * 100)}%</span>
-              </span>
-            </div>
-          )}
+          {best && best.plate && (() => {
+            const box = best.bbox;
+            const fw = best.frame_w || 0;
+            const fh = best.frame_h || 0;
+            const conf = best.confidence || 0;
+            const style = (box && fw && fh) ? {
+              left:   `${(box[0] / fw) * 100}%`,
+              top:    `${(box[1] / fh) * 100}%`,
+              width:  `${((box[2] - box[0]) / fw) * 100}%`,
+              height: `${((box[3] - box[1]) / fh) * 100}%`,
+            } : {};
+            return (
+              <div className={`alpr-box${conf >= 0.8 ? " alpr-box--locked" : ""}`} style={style}>
+                <span className="alpr-tag">
+                  <span className="alpr-pulse"></span>
+                  {best.plate}&nbsp;<span className="alpr-conf">{Math.round(conf * 100)}%</span>
+                </span>
+              </div>
+            );
+          })()}
 
           <div className="burn-stamp">{ts}</div>
 
