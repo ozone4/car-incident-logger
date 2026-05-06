@@ -117,7 +117,10 @@ After resume, check:
 systemctl status car-incident-logger car-incident-power-watch
 curl http://127.0.0.1:5000/health
 curl http://127.0.0.1:5000/system/power
+curl http://127.0.0.1:5000/appliance/status
 ```
+
+The dashboard also shows a **Linux appliance** card with AC/battery state, suspend grace countdown, camera/recording state, and last resume time.
 
 If the laptop does **not** wake automatically when AC returns, the app will still resume cleanly once the laptop is woken by lid/power button. Later options include RTC wake polling or BIOS-specific AC wake tuning.
 

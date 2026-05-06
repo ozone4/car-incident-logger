@@ -242,7 +242,7 @@ body {
 .live-side {
   grid-column: 2; grid-row: 1 / span 2;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr auto auto;
   gap: 8px;
   min-height: 0;
 }
@@ -496,6 +496,16 @@ body {
   color: var(--accent-soft);
   border-color: var(--accent-deep);
 }
+.pill-ok {
+  background: rgba(94,179,122,0.12);
+  color: var(--ok);
+  border-color: rgba(94,179,122,0.35);
+}
+.pill-warn {
+  background: rgba(224,179,74,0.12);
+  color: var(--warn);
+  border-color: rgba(224,179,74,0.4);
+}
 .pulse {
   width: 6px; height: 6px;
   background: var(--accent);
@@ -540,6 +550,54 @@ body {
 }
 .sight-flag svg { width: 10px; height: 10px; color: var(--danger); }
 .sight-ago { font-family: var(--font-mono); font-size: 9px; color: var(--muted); letter-spacing: 0.06em; }
+
+/* ── Appliance power panel ────────────────────────────────── */
+.appliance {
+  padding: 8px 10px;
+  border-left: 2px solid var(--ok);
+}
+.appliance-warn { border-left-color: var(--warn); }
+.appliance .card-head { margin-bottom: 6px; padding-bottom: 5px; }
+.appliance-main {
+  display: grid;
+  grid-template-columns: 30px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+.appliance-icon {
+  width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--ok);
+}
+.appliance-warn .appliance-icon { color: var(--warn); border-color: rgba(224,179,74,0.4); background: rgba(224,179,74,0.08); }
+.appliance-icon svg { width: 16px; height: 16px; }
+.appliance-copy { display: flex; flex-direction: column; min-width: 0; }
+.appliance-title {
+  font-size: 16px; font-weight: 700; letter-spacing: 0.08em;
+  color: var(--ok); text-transform: uppercase;
+}
+.appliance-warn .appliance-title { color: var(--warn); text-shadow: 0 0 6px rgba(224,179,74,0.24); }
+.appliance-sub {
+  font-size: 9px; color: var(--muted); letter-spacing: 0.08em;
+  text-transform: uppercase; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.appliance-bar {
+  height: 3px; background: var(--line); margin-top: 7px; overflow: hidden;
+}
+.appliance-bar span {
+  display: block; height: 100%; background: var(--warn); box-shadow: 0 0 8px rgba(224,179,74,0.32);
+  transition: width 200ms linear;
+}
+.appliance-mini {
+  display: flex; justify-content: space-between; gap: 6px;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
 
 /* ── Health rail ──────────────────────────────────────────── */
 .health-rail {

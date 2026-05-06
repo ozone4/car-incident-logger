@@ -14,12 +14,14 @@ This script is designed to run as a systemd service next to the Flask app.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +43,7 @@ DEFAULTS = {
     "stop_before_suspend": True,
     "restart_after_resume": True,
     "suspend_command": "systemctl suspend",
+    "state_file": "./data/appliance-power-state.json",
 }
 
 
@@ -71,6 +74,20 @@ def post_json(url: str, timeout: float = 5.0) -> tuple[bool, str]:
 def run_shell(command: str, timeout: float | None = None) -> int:
     LOG.info("Running: %s", command)
     return subprocess.run(command, shell=True, timeout=timeout, check=False).returncode  # noqa: S602 - admin-configured local command
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def write_state(state_file: Path, payload: dict[str, Any]) -> None:
+    try:
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp = state_file.with_suffix(state_file.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp.replace(state_file)
+    except OSError as exc:
+        LOG.warning("Could not write state file %s: %s", state_file, exc)
 
 
 def prepare_for_suspend(app_url: str, stop_before_suspend: bool) -> None:
@@ -125,8 +142,15 @@ def main() -> int:
     critical = int(cfg["critical_battery_percent"])
     app_url = str(cfg["app_url"])
     suspend_command = str(cfg["suspend_command"])
+    state_file = Path(str(cfg["state_file"]))
+    if not state_file.is_absolute():
+        state_file = PROJECT_ROOT / state_file
     battery_since: float | None = None
+    battery_since_wall: str | None = None
     last_state: str | None = None
+    last_suspend_reason: str | None = None
+    last_suspend_at: str | None = None
+    last_resume_at: str | None = None
 
     LOG.info("Power watcher started: grace=%ss critical=%s%% app=%s", int(grace), critical, app_url)
 
@@ -141,24 +165,68 @@ def main() -> int:
         if status.get("on_ac") is False:
             if battery_since is None:
                 battery_since = time.monotonic()
+                battery_since_wall = utc_now()
                 LOG.warning("AC power lost; continuing for %s seconds before suspend", int(grace))
+
+            elapsed = time.monotonic() - battery_since if battery_since is not None else 0
+            write_state(state_file, {
+                "updated_at": utc_now(),
+                "state": "battery",
+                "battery_since": battery_since_wall,
+                "battery_elapsed_seconds": round(elapsed, 1),
+                "grace_seconds": grace,
+                "grace_remaining_seconds": max(0, round(grace - elapsed, 1)),
+                "last_suspend_reason": last_suspend_reason,
+                "last_suspend_at": last_suspend_at,
+                "last_resume_at": last_resume_at,
+                "power": status,
+            })
 
             suspend, reason = should_suspend(status, battery_since, grace, critical)
             if suspend:
                 LOG.warning("Preparing to suspend: %s", reason)
                 prepare_for_suspend(app_url, bool(cfg["stop_before_suspend"]))
+                last_suspend_reason = reason
+                last_suspend_at = utc_now()
+                write_state(state_file, {
+                    "updated_at": utc_now(),
+                    "state": "suspending",
+                    "battery_since": battery_since_wall,
+                    "grace_seconds": grace,
+                    "grace_remaining_seconds": 0,
+                    "last_suspend_reason": last_suspend_reason,
+                    "last_suspend_at": last_suspend_at,
+                    "last_resume_at": last_resume_at,
+                    "power": status,
+                })
                 if args.dry_run:
                     LOG.warning("Dry-run enabled; skipping suspend")
                     battery_since = None
+                    battery_since_wall = None
                 else:
                     rc = run_shell(suspend_command)
+                    last_resume_at = utc_now()
                     LOG.info("Suspend command returned rc=%s; system has resumed or command failed", rc)
                     battery_since = None
+                    battery_since_wall = None
                     time.sleep(5)
                     if bool(cfg["restart_after_resume"]):
                         request_resume_start(app_url)
         else:
             battery_since = None
+            battery_since_wall = None
+            write_state(state_file, {
+                "updated_at": utc_now(),
+                "state": "ac" if status.get("on_ac") is True else "unknown",
+                "battery_since": None,
+                "battery_elapsed_seconds": 0,
+                "grace_seconds": grace,
+                "grace_remaining_seconds": grace,
+                "last_suspend_reason": last_suspend_reason,
+                "last_suspend_at": last_suspend_at,
+                "last_resume_at": last_resume_at,
+                "power": status,
+            })
 
         time.sleep(interval)
 

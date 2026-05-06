@@ -64,6 +64,22 @@ function useRecordingStatus() {
   return data;
 }
 
+function useApplianceStatus() {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    const tick = async () => {
+      try {
+        const r = await fetch("/appliance/status");
+        if (r.ok) setData(await r.json());
+      } catch {}
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+  return data;
+}
+
 function useIncidents() {
   const [data, setData] = useState(SEED_INCIDENTS);
   useEffect(() => {
@@ -117,6 +133,23 @@ function transformSightings(sightings) {
   }));
 }
 
+function fmtDuration(seconds) {
+  if (seconds === null || seconds === undefined || Number.isNaN(Number(seconds))) return "—";
+  const s = Math.max(0, Math.round(Number(seconds)));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m > 0 ? `${m}:${String(r).padStart(2, "0")}` : `${r}s`;
+}
+
+function fmtShortTime(ts) {
+  if (!ts) return "—";
+  try {
+    const d = new Date(ts);
+    if (!isNaN(d)) return d.toLocaleTimeString("en-CA", { hour: "2-digit", minute: "2-digit", hour12: false });
+  } catch {}
+  return "—";
+}
+
 /* ────────────────────────────────────────────────────────────
    Icons (Lucide-style, 1.5px stroke, currentColor)
    ──────────────────────────────────────────────────────────── */
@@ -144,6 +177,7 @@ const Icons = {
   pause:     () => <Icon><rect x="7" y="5" width="3.5" height="14" rx="0.5"/><rect x="13.5" y="5" width="3.5" height="14" rx="0.5"/></Icon>,
   play:      () => <Icon><path d="M7 5l12 7-12 7V5z"/></Icon>,
   bolt:      () => <Icon><path d="M13 3L4 14h6l-1 7 9-11h-6l1-7z"/></Icon>,
+  battery:   () => <Icon><rect x="3" y="7" width="16" height="10" rx="2"/><path d="M21 11v2"/><path d="M7 11h6"/></Icon>,
   plate:     () => <Icon><rect x="3" y="7" width="18" height="10" rx="1.5"/><path d="M7 11h2M11 11h2M15 11h2M7 14h10"/></Icon>,
   car:       () => <Icon><path d="M5 16V11l2-5h10l2 5v5"/><path d="M3 16h18v3H3z"/><circle cx="7.5" cy="16" r="1.2"/><circle cx="16.5" cy="16" r="1.2"/></Icon>,
   swap:      () => <Icon><path d="M3 8h14l-3-3M21 16H7l3 3"/></Icon>,
@@ -374,6 +408,46 @@ function IncidentsPanel({ rows }) {
    Health rail — real system status from /health
    ──────────────────────────────────────────────────────────── */
 
+function AppliancePanel({ appliance }) {
+  const power = appliance?.power || {};
+  const onBattery = power.on_ac === false;
+  const onAc = power.on_ac === true;
+  const pct = power.battery_percent;
+  const remaining = appliance?.grace_remaining_seconds;
+  const grace = appliance?.grace_seconds || 0;
+  const used = onBattery && grace > 0 ? Math.max(0, Math.min(1, 1 - (Number(remaining || 0) / grace))) : 0;
+  const tone = onBattery ? "warn" : onAc ? "ok" : "warn";
+  const stateLabel = onBattery ? "battery" : onAc ? "AC online" : "unknown";
+  const sub = onBattery
+    ? `suspend in ${fmtDuration(remaining)} · ${pct ?? "—"}%`
+    : `${pct ?? "—"}% battery · watcher ${fmtShortTime(appliance?.watcher_updated_at)}`;
+
+  return (
+    <section className={`card appliance appliance-${tone}`}>
+      <div className="card-head">
+        <span className="eyebrow">Linux appliance</span>
+        <span className={`pill ${onBattery ? "pill-warn" : "pill-ok"}`}>
+          {onBattery && <span className="pulse"></span>}
+          {stateLabel}
+        </span>
+      </div>
+      <div className="appliance-main">
+        <span className="appliance-icon"><Icons.battery/></span>
+        <span className="appliance-copy">
+          <span className="appliance-title mono">{onBattery ? fmtDuration(remaining) : "armed"}</span>
+          <span className="appliance-sub mono">{sub}</span>
+        </span>
+      </div>
+      <div className="appliance-bar"><span style={{ width: `${used * 100}%` }}></span></div>
+      <div className="appliance-mini mono">
+        <span>cam {appliance?.camera_running ? "on" : "off"}</span>
+        <span>rec {appliance?.recording ? "on" : "off"}</span>
+        <span>resume {fmtShortTime(appliance?.last_resume_at)}</span>
+      </div>
+    </section>
+  );
+}
+
 function HealthRail({ health, alpr }) {
   const cam   = health?.components?.camera;
   const disk  = health?.disk;
@@ -525,7 +599,7 @@ function IncidentButton({ size = "lg", onCapture }) {
    View 1 — LIVE
    ──────────────────────────────────────────────────────────── */
 
-function LiveView({ muted, sightings, incidents, frozen, setFrozen, alpr, health }) {
+function LiveView({ muted, sightings, incidents, frozen, setFrozen, alpr, health, appliance }) {
   return (
     <div className="live-view">
       <div className="live-stage">
@@ -548,6 +622,7 @@ function LiveView({ muted, sightings, incidents, frozen, setFrozen, alpr, health
       <div className="live-side">
         <IncidentButton size="md"/>
         <SightingsPanel rows={sightings.slice(0, 5)} running={alpr.running}/>
+        <AppliancePanel appliance={appliance}/>
         <HealthRail health={health} alpr={alpr}/>
       </div>
 
@@ -562,7 +637,7 @@ function LiveView({ muted, sightings, incidents, frozen, setFrozen, alpr, health
    View 2 — CONTROLS
    ──────────────────────────────────────────────────────────── */
 
-function ControlsView({ recording, muted, setMuted, health, alpr }) {
+function ControlsView({ recording, muted, setMuted, health, alpr, appliance }) {
   const [tags, setTags] = useState({});
   const flash = (k) => {
     setTags(t => ({ ...t, [k]: true }));
@@ -577,6 +652,12 @@ function ControlsView({ recording, muted, setMuted, health, alpr }) {
 
   const activePlates = (alpr?.sightings || []).filter(s => s.status === "visible").length;
   const bestPlate = alpr?.best ? alpr.best.plate : "none";
+  const power = appliance?.power || {};
+  const onBattery = power.on_ac === false;
+  const powerTitle = onBattery ? "Battery grace" : power.on_ac === true ? "AC online" : "Power unknown";
+  const powerSub = onBattery
+    ? `suspend in ${fmtDuration(appliance?.grace_remaining_seconds)} · ${power.battery_percent ?? "—"}% battery`
+    : `${power.battery_percent ?? "—"}% battery · suspend watcher armed`;
 
   return (
     <div className="controls-view">
@@ -656,6 +737,13 @@ function ControlsView({ recording, muted, setMuted, health, alpr }) {
           tone="muted"
           bar={storeBar}
         />
+        <ActionCard
+          title={powerTitle}
+          sub={powerSub}
+          icon={<Icons.battery/>}
+          tone={onBattery ? "warn" : "ink"}
+          toggle={appliance?.enabled || false}
+        />
       </div>
 
       <div className="ctl-bottom">
@@ -670,6 +758,7 @@ function ControlsView({ recording, muted, setMuted, health, alpr }) {
           <Meta label="alpr status" value={alpr?.running ? "scanning" : "offline"} sub={alpr?.mode || "—"}/>
           <Meta label="best plate"  value={bestPlate} sub={alpr?.best ? `${Math.round((alpr.best.confidence || 0) * 100)}% conf` : "no detection"}/>
           <Meta label="disk free"   value={disk ? `${Number(disk.free_gb || 0).toFixed(0)} GB` : "—"} sub={disk ? `${disk.percent_used || 0}% used` : "loading"}/>
+          <Meta label="power"       value={onBattery ? fmtDuration(appliance?.grace_remaining_seconds) : "AC"} sub={onBattery ? "until suspend" : `battery ${power.battery_percent ?? "—"}%`}/>
         </div>
       </div>
     </div>
@@ -724,6 +813,7 @@ function App() {
   const alpr      = useLiveALPR();
   const health    = useHealth();
   const recStatus = useRecordingStatus();
+  const appliance = useApplianceStatus();
   const incidents = useIncidents();
 
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
@@ -759,6 +849,7 @@ function App() {
             setFrozen={(f) => { setFrozen(f); setTweak("frozen", f); }}
             alpr={alpr}
             health={health}
+            appliance={appliance}
           />
         ) : (
           <ControlsView
@@ -767,6 +858,7 @@ function App() {
             setMuted={(m) => { setMuted(m); setTweak("muted", m); }}
             health={health}
             alpr={alpr}
+            appliance={appliance}
           />
         )}
       </main>

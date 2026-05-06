@@ -975,10 +975,74 @@ def storage_status_api():
     return jsonify(_storage_manager.status())
 
 
+def _appliance_config() -> dict:
+    cfg = _load_config()
+    section = cfg.get("appliance", default={})
+    if not isinstance(section, dict):
+        section = {}
+    return {
+        "enabled": bool(section.get("enabled", True)),
+        "app_url": section.get("app_url", "http://127.0.0.1:5000"),
+        "check_interval_seconds": int(section.get("check_interval_seconds", 5)),
+        "battery_grace_seconds": int(section.get("battery_grace_seconds", 600)),
+        "critical_battery_percent": int(section.get("critical_battery_percent", 12)),
+        "stop_before_suspend": bool(section.get("stop_before_suspend", True)),
+        "restart_after_resume": bool(section.get("restart_after_resume", True)),
+        "suspend_command": section.get("suspend_command", "systemctl suspend"),
+        "state_file": section.get("state_file", "./data/appliance-power-state.json"),
+    }
+
+
+def _read_appliance_state(state_file: str) -> dict:
+    path = Path(state_file)
+    if not path.is_absolute():
+        path = (PROJECT_ROOT / path).resolve()
+    try:
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Could not read appliance state file %s: %s", path, exc)
+    return {}
+
+
 @app.route("/system/power")
 def system_power_api():
     """Return Linux AC/battery power status for appliance installs."""
     return jsonify(read_power_status())
+
+
+@app.route("/appliance/status")
+def appliance_status_api():
+    """Return dashboard-friendly Linux appliance status."""
+    cfg = _appliance_config()
+    state = _read_appliance_state(str(cfg["state_file"]))
+    power = state.get("power") if isinstance(state.get("power"), dict) else read_power_status()
+
+    grace = int(cfg["battery_grace_seconds"])
+    remaining = state.get("grace_remaining_seconds")
+    if remaining is None:
+        remaining = grace if power.get("on_ac") is not False else 0
+
+    cam = _camera_status()
+    rec = _loop_recorder.status() if _loop_recorder else {"recording": False, "enabled": _load_config().recording_enabled}
+
+    return jsonify({
+        "enabled": cfg["enabled"],
+        "mode": "linux-appliance",
+        "power": power,
+        "state": state.get("state") or power.get("state") or "unknown",
+        "grace_seconds": grace,
+        "grace_remaining_seconds": remaining,
+        "battery_since": state.get("battery_since"),
+        "last_suspend_reason": state.get("last_suspend_reason"),
+        "last_suspend_at": state.get("last_suspend_at"),
+        "last_resume_at": state.get("last_resume_at"),
+        "watcher_updated_at": state.get("updated_at"),
+        "camera_running": cam.get("running", False),
+        "recording": rec.get("recording", False),
+        "segments_completed": rec.get("segments_completed", 0),
+        "config": cfg,
+    })
 
 
 @app.route("/storage/cleanup", methods=["POST"])
