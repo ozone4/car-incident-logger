@@ -48,6 +48,7 @@ from modules.plate_database import PlateDatabase  # noqa: E402
 from modules.rolling_buffer import RollingBuffer  # noqa: E402
 from modules.recording_recovery import recover_recordings  # noqa: E402
 from modules.storage_manager import StorageManager  # noqa: E402
+from modules.power_status import read_power_status  # noqa: E402
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -972,6 +973,12 @@ def storage_status_api():
     if _storage_manager is None:
         return jsonify({"running": False})
     return jsonify(_storage_manager.status())
+
+
+@app.route("/system/power")
+def system_power_api():
+    """Return Linux AC/battery power status for appliance installs."""
+    return jsonify(read_power_status())
 
 
 @app.route("/storage/cleanup", methods=["POST"])

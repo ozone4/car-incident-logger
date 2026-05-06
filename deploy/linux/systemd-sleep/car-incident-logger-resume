@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# systemd-sleep hook: after suspend/resume, restart the dashcam service so USB
+# camera handles, V4L2 state, and recorder threads come back cleanly.
+
+set -euo pipefail
+
+case "${1:-}" in
+  post)
+    /usr/bin/systemctl restart car-incident-logger.service || true
+    /usr/bin/systemctl restart car-incident-power-watch.service || true
+    ;;
+esac

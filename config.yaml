@@ -85,6 +85,16 @@ dashcam:
   post_roll_seconds: 5       # seconds of video after trigger to capture
   output_path: ./data/dashcam  # where incident clips are saved
 
+appliance:
+  enabled: true
+  app_url: http://127.0.0.1:5000
+  check_interval_seconds: 5
+  battery_grace_seconds: 600      # after AC loss, keep recording this long before suspend
+  critical_battery_percent: 12    # suspend immediately at/below this battery level
+  stop_before_suspend: true       # stop camera/recording and sync files before suspend
+  restart_after_resume: true      # ask app to restart camera after resume
+  suspend_command: systemctl suspend
+
 notifier:
   chime_enabled: false
   chime_file: ./data/config/chime.wav

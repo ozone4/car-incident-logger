@@ -72,7 +72,21 @@ pip install -r requirements.txt
 py scripts/setup_db.py
 ```
 
-### 5. Test the Arducam on Windows
+### 5. Linux appliance mode — ThinkPad / always-on dashcam
+
+To install the app as a Linux boot-and-record appliance with systemd services, AC-loss grace period, clean suspend, and resume restart hooks, see:
+
+```text
+docs/linux-appliance.md
+```
+
+Quick start on the Linux laptop:
+
+```bash
+bash scripts/install_linux_appliance.sh
+```
+
+### 6. Test the Arducam on Windows
 
 Plug in the Arducam first, then run:
 

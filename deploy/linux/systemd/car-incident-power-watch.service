@@ -1,0 +1,20 @@
+[Unit]
+Description=Car Incident Logger AC/battery suspend watcher
+After=car-incident-logger.service
+Wants=car-incident-logger.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=__PROJECT_DIR__
+Environment=PYTHONUNBUFFERED=1
+ExecStart=__PROJECT_DIR__/.venv/bin/python scripts/linux/dashcam-power-watch.py --config __PROJECT_DIR__/config.yaml
+Restart=always
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
