@@ -1,5 +1,6 @@
 camera:
-  device_index: 0
+  # ThinkPad install: /dev/video0 is the built-in webcam; Arducam usually starts at /dev/video2.
+  device_index: 2
   resolution:
     width: 1920
     height: 1080

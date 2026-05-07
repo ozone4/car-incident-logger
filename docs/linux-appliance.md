@@ -40,6 +40,16 @@ Dashboard:
 http://<laptop-ip>:5000/
 ```
 
+Camera default:
+
+- On the ThinkPad X1 Carbon, `/dev/video0` is the integrated webcam.
+- The Arducam 1080P Ultra-lowlight usually appears as `/dev/video2`, so the default `camera.device_index` is `2`.
+- To confirm on the laptop:
+
+```bash
+v4l2-ctl --list-devices
+```
+
 ---
 
 ## Services

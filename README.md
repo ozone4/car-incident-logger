@@ -106,7 +106,7 @@ Edit `config.yaml` before running. Key settings:
 
 ```yaml
 camera:
-  device_index: 0        # Linux: /dev/video0, macOS: typically 0
+  device_index: 2        # ThinkPad Linux: /dev/video0 is built-in webcam; Arducam usually starts at /dev/video2
   resolution:
     width: 1920
     height: 1080
@@ -676,7 +676,7 @@ python scripts/test_alpr.py --camera --frames 30
 ## Troubleshooting
 
 **Camera not opening**
-- Check `camera.device_index` in config.yaml (try 0, 1, 2...)
+- Check `camera.device_index` in config.yaml. On the ThinkPad, `/dev/video0` is the built-in webcam and the Arducam is usually `/dev/video2`.
 - Verify the camera is recognized: `ls /dev/video*`
 - On macOS, grant camera permissions to Terminal/Python
 
