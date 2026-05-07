@@ -26,10 +26,9 @@ flask>=3.0
 # Alert chime playback (only needed if notifier.chime_enabled = true)
 # playsound>=1.3.0
 
-# Phase 2 ALPR — uncomment when implementing live plate recognition
-# easyocr>=1.7.0
-# ultralytics>=8.0.0      # YOLOv8 plate detector
-# openalpr                # Automotive-grade ALPR (requires system library)
+# Phase 2 ALPR
+ultralytics>=8.0.0      # YOLOv8 vehicle + plate detector
+fast-plate-ocr>=0.2.0   # ONNX OCR optimized for NA plates (replaces EasyOCR/PaddleOCR)
 
 # Raspberry Pi GPIO (install only on Pi hardware)
 # RPi.GPIO>=0.7.1
