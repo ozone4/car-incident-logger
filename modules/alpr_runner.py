@@ -323,8 +323,11 @@ class _FastPlateOCRRecognizer(_BaseRecognizer):
 
     def initialize(self) -> bool:
         try:
-            from fast_plate_ocr import ONNXPlateRecognizer  # noqa: PLC0415
-            self._model = ONNXPlateRecognizer(self._model_name)
+            try:
+                from fast_plate_ocr import LicensePlateRecognizer as _Recognizer  # noqa: PLC0415
+            except ImportError:
+                from fast_plate_ocr import ONNXPlateRecognizer as _Recognizer  # noqa: PLC0415
+            self._model = _Recognizer(self._model_name)
             self.status = "ready"
             logger.info("FastPlateOCR ready (model: %s)", self._model_name)
             return True
