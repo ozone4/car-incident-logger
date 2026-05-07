@@ -352,7 +352,9 @@ class _FastPlateOCRRecognizer(_BaseRecognizer):
             results = self._model.run(gray)
             if not results:
                 return []
-            text = str(results[0]).strip() if results[0] else ""
+            pred = results[0]
+            # v1.x returns PlatePrediction objects with a .plate attribute
+            text = (pred.plate if hasattr(pred, "plate") else str(pred)).strip()
             if not text:
                 return []
             # fast-plate-ocr does not expose per-character confidence; use a fixed
