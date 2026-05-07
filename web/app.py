@@ -877,7 +877,18 @@ def dashcam_status_api():
 
 @app.route("/dashcam/trigger", methods=["POST"])
 def dashcam_trigger_api():
-    """Trigger a dashcam incident capture from the web UI."""
+    """Trigger a dashcam incident capture from the web UI.
+
+    Capture can take 35+ seconds because it includes post-roll and video encoding.
+    Start it in the background so the dashboard request does not hang and exhaust
+    browser/server request resources while other status polling continues.
+    """
+    if not _web_trigger.is_armed:
+        return jsonify({"ok": False, "error": "Trigger is not armed"}), 409
+
+    if _dashcam and _dashcam.capture_state in {"capturing", "saving"}:
+        return jsonify({"ok": False, "error": "Capture already in progress"}), 409
+
     # Gather current ALPR state for metadata
     meta: dict = {}
     with _alpr_lock:
@@ -888,9 +899,19 @@ def dashcam_trigger_api():
         if sightings:
             meta["recent_sightings"] = sightings[:10]
 
-    result = _web_trigger.fire(meta)
-    status_code = 200 if result.get("ok") else 409
-    return jsonify(result), status_code
+    # Mark immediately so the dashboard poll cannot mistake a previous completed
+    # capture for this newly accepted one before the background thread starts.
+    if _dashcam:
+        _dashcam._capture_state = "capturing"  # noqa: SLF001 - route owns singleton lifecycle
+
+    def _run_capture() -> None:
+        try:
+            _web_trigger.fire(meta)
+        except Exception:
+            logger.exception("Background dashcam capture failed")
+
+    threading.Thread(target=_run_capture, daemon=True, name="DashcamTrigger").start()
+    return jsonify({"ok": True, "accepted": True, "capture_state": "capturing"}), 202
 
 
 @app.route("/dashcam/clips/<path:subpath>")

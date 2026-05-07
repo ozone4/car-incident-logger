@@ -19,14 +19,23 @@ function useLiveALPR() {
     frames_scanned: 0, detections_seen: 0, mode: "—",
   });
   useEffect(() => {
+    let inFlight = false;
     const tick = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 2500);
       try {
-        const r = await fetch("/alpr/live/status");
+        const r = await fetch("/alpr/live/status", { signal: controller.signal });
         if (r.ok) setData(await r.json());
       } catch {}
+      finally {
+        clearTimeout(timeout);
+        inFlight = false;
+      }
     };
     tick();
-    const id = setInterval(tick, 300);
+    const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, []);
   return data;
@@ -540,23 +549,48 @@ function IncidentButton({ size = "lg", onCapture }) {
   const runCapture = async () => {
     setState("capturing");
     try {
-      const r = await fetch("/dashcam/trigger", { method: "POST" });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      const r = await fetch("/dashcam/trigger", { method: "POST", signal: controller.signal });
+      clearTimeout(timeout);
       const body = await r.json();
       if (body.ok) {
-        setState("saving");
-        setTimeout(() => {
-          setState("saved");
-          onCapture && onCapture(body);
-          setTimeout(() => { setProgress(0); setState("idle"); }, 1800);
-        }, 1300);
+        await waitForCaptureDone(body);
       } else {
-        setProgress(0);
-        setState("idle");
+        setState("error");
+        setTimeout(() => { setProgress(0); setState("idle"); }, 2500);
       }
     } catch {
-      setProgress(0);
-      setState("idle");
+      setState("error");
+      setTimeout(() => { setProgress(0); setState("idle"); }, 2500);
     }
+  };
+
+  const waitForCaptureDone = async (initialBody) => {
+    const deadline = Date.now() + 120000;
+    while (Date.now() < deadline) {
+      try {
+        const r = await fetch("/dashcam/status");
+        if (r.ok) {
+          const body = await r.json();
+          if (body.capture_state === "saving") setState("saving");
+          if (body.capture_state === "done") {
+            setState("saved");
+            onCapture && onCapture(body.last_result || initialBody);
+            setTimeout(() => { setProgress(0); setState("idle"); }, 1800);
+            return;
+          }
+          if (body.capture_state === "error") {
+            setState("error");
+            setTimeout(() => { setProgress(0); setState("idle"); }, 3500);
+            return;
+          }
+        }
+      } catch {}
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    setState("error");
+    setTimeout(() => { setProgress(0); setState("idle"); }, 3500);
   };
 
   const tap = () => { if (state === "idle") runCapture(); };
@@ -565,13 +599,15 @@ function IncidentButton({ size = "lg", onCapture }) {
     state === "idle"      ? "INCIDENT"  :
     state === "hold"      ? "HOLD…"     :
     state === "capturing" ? "CAPTURING" :
-    state === "saving"    ? "SAVING"    : "SAVED";
+    state === "saving"    ? "SAVING"    :
+    state === "error"     ? "ERROR"     : "SAVED";
 
   const sub =
     state === "idle"      ? "hold 1.6s · save 30s+5s clip" :
     state === "hold"      ? `${Math.round(progress)}%`     :
-    state === "capturing" ? "pre-roll 30s →"               :
-    state === "saving"    ? "writing mp4 + json"           : "data/dashcam/";
+    state === "capturing" ? "post-roll + encode"           :
+    state === "saving"    ? "writing mp4 + json"           :
+    state === "error"     ? "check service logs"           : "data/dashcam/";
 
   return (
     <button
