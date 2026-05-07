@@ -346,7 +346,10 @@ class _FastPlateOCRRecognizer(_BaseRecognizer):
         if self._model is None:
             return []
         try:
-            results = self._model.run(image)
+            import cv2  # noqa: PLC0415
+            # fast-plate-ocr expects RGB; OpenCV frames are BGR
+            rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) if len(image.shape) == 3 else image
+            results = self._model.run(rgb)
             if not results:
                 return []
             text = str(results[0]).strip() if results[0] else ""
