@@ -296,6 +296,8 @@ def _alpr_config() -> dict:
         "vehicle_model_path": cfg.alpr_vehicle_model_path,
         "vehicle_confidence_threshold": cfg.alpr_vehicle_confidence_threshold,
         "vehicle_fallback_to_fullframe": cfg.alpr_vehicle_fallback_to_fullframe,
+        "ocr_fallback_when_no_detections": cfg.alpr_ocr_fallback_when_no_detections,
+        "fullframe_ocr_confidence_threshold": cfg.alpr_fullframe_ocr_confidence_threshold,
     }
 
 

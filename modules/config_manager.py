@@ -150,6 +150,14 @@ class ConfigManager:
         return bool(self.get("alpr", "vehicle_fallback_to_fullframe", default=True))
 
     @property
+    def alpr_ocr_fallback_when_no_detections(self) -> bool:
+        return bool(self.get("alpr", "ocr_fallback_when_no_detections", default=True))
+
+    @property
+    def alpr_fullframe_ocr_confidence_threshold(self) -> float:
+        return float(self.get("alpr", "fullframe_ocr_confidence_threshold", default=0.60))
+
+    @property
     def alpr_scan_interval(self) -> float:
         return float(self.get("alpr", "scan_interval_seconds", default=2.0))
 

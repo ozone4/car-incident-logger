@@ -633,7 +633,9 @@ alpr:
   enabled: true
   confidence_threshold: 0.5        # final combined plate confidence
   yolo_confidence_threshold: 0.1   # lower = more OCR attempts, more noise
-  scan_interval_seconds: 2
+  ocr_fallback_when_no_detections: true
+  fullframe_ocr_confidence_threshold: 0.60
+  scan_interval_seconds: 1.0
   yolo_model_path: ./data/models/plate_detector.pt
   models_dir: ./data/models
 ```

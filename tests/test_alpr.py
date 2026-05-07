@@ -254,6 +254,75 @@ class TestALPRRunnerNoDeps:
         # Actually 0.92 >= 0.80 so it passes
         assert isinstance(results, list)
 
+    def test_fullframe_ocr_fallback_when_detector_finds_no_boxes(self):
+        """A ready detector with no boxes falls back to whole-frame OCR for small/test plates."""
+        from modules.alpr_runner import _BaseDetector, _BaseRecognizer
+
+        class _EmptyDetector(_BaseDetector):
+            def initialize(self):
+                self.status = "ready"
+                return True
+
+            def detect(self, frame):
+                return []
+
+        class _StubRecognizer(_BaseRecognizer):
+            def initialize(self):
+                self.status = "ready"
+                return True
+
+            def recognize(self, image):
+                return [("634-XSG", 0.91)]
+
+        runner = ALPRRunner(
+            {"confidence_threshold": 0.3, "fullframe_ocr_confidence_threshold": 0.60},
+            detector=_EmptyDetector(),
+            recognizer=_StubRecognizer(),
+        )
+        runner.initialize()
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        results = runner.run_on_frame(frame)
+        assert len(results) == 1
+        assert results[0]["plate"] == "634XSG"
+        assert results[0]["source"] == "ocr_fullframe"
+
+    def test_fullframe_ocr_tries_upscaled_variants(self):
+        """Whole-frame fallback tries enhanced variants before giving up."""
+        from modules.alpr_runner import _BaseDetector, _BaseRecognizer
+
+        class _EmptyDetector(_BaseDetector):
+            def initialize(self):
+                self.status = "ready"
+                return True
+
+            def detect(self, frame):
+                return []
+
+        class _VariantRecognizer(_BaseRecognizer):
+            def __init__(self):
+                self.calls = 0
+
+            def initialize(self):
+                self.status = "ready"
+                return True
+
+            def recognize(self, image):
+                self.calls += 1
+                return [] if self.calls == 1 else [("634-XSG", 0.91)]
+
+        recognizer = _VariantRecognizer()
+        runner = ALPRRunner(
+            {"confidence_threshold": 0.3, "fullframe_ocr_confidence_threshold": 0.60},
+            detector=_EmptyDetector(),
+            recognizer=recognizer,
+        )
+        runner.initialize()
+        frame = np.zeros((120, 160, 3), dtype=np.uint8)
+        results = runner.run_on_frame(frame)
+        assert recognizer.calls >= 2
+        assert len(results) == 1
+        assert results[0]["plate"] == "634XSG"
+
     def test_detection_dict_format(self):
         """Verify returned dicts have expected keys."""
         from modules.alpr_runner import _BaseDetector, _BaseRecognizer

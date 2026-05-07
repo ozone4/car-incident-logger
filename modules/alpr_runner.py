@@ -546,6 +546,29 @@ def _ocr_crop_variants(crop: np.ndarray) -> list[np.ndarray]:
     return variants
 
 
+def _fullframe_ocr_variants(frame: np.ndarray) -> list[tuple[str, np.ndarray]]:
+    """Return OCR inputs for whole-frame fallback, biased toward small test plates.
+
+    Whole-frame OCR can miss a small plate/sign when it only sees the original
+    1080p image. Try a few cheap, deterministic variants before giving up:
+    original, upscaled original, and upper-frame crops where plates/signs often
+    appear during bench/garage testing.
+    """
+    h, _w = frame.shape[:2]
+    upper = frame[: max(1, int(h * 0.65)), :]
+    variants: list[tuple[str, np.ndarray]] = [("full", frame), ("upper_65pct", upper)]
+    try:
+        import cv2  # noqa: PLC0415
+
+        h, w = frame.shape[:2]
+        variants.append(("full_2x", cv2.resize(frame, (w * 2, h * 2), interpolation=cv2.INTER_CUBIC)))
+        uh, uw = upper.shape[:2]
+        variants.append(("upper_65pct_2x", cv2.resize(upper, (uw * 2, uh * 2), interpolation=cv2.INTER_CUBIC)))
+    except Exception:  # noqa: BLE001
+        pass
+    return variants
+
+
 def _normalize_and_correct(raw: str) -> tuple[str, bool]:
     """Normalize OCR text without character substitution.
 
@@ -585,6 +608,8 @@ class ALPRRunner:
       vehicle_model_path            str    (default yolov8n.pt, auto-downloaded)
       vehicle_confidence_threshold  float  (default 0.3)  vehicle detector threshold
       vehicle_fallback_to_fullframe bool   (default True) direct plate scan when no vehicles found
+      ocr_fallback_when_no_detections bool (default True) OCR whole frame if YOLO finds no plate boxes
+      fullframe_ocr_confidence_threshold float (default 0.60) OCR fallback threshold
     """
 
     def __init__(
@@ -600,6 +625,8 @@ class ALPRRunner:
         self._yolo_conf_threshold = float(cfg.get("yolo_confidence_threshold", 0.1))
         self._yolo_imgsz = int(cfg.get("yolo_imgsz", 1280))
         self._vehicle_fallback_to_fullframe = bool(cfg.get("vehicle_fallback_to_fullframe", True))
+        self._ocr_fallback_when_no_detections = bool(cfg.get("ocr_fallback_when_no_detections", True))
+        self._fullframe_ocr_threshold = float(cfg.get("fullframe_ocr_confidence_threshold", 0.60))
         models_dir = Path(cfg.get("models_dir", "./data/models"))
         yolo_path = cfg.get(
             "yolo_model_path", str(models_dir / "plate_detector.pt")
@@ -732,11 +759,17 @@ class ALPRRunner:
             if not vehicles and self._vehicle_fallback_to_fullframe:
                 results.extend(self._direct_plate_scan(frame))
 
+            if not results and self._ocr_fallback_when_no_detections:
+                results.extend(self._fullframe_ocr(frame, reason="vehicle_or_plate_detector_empty"))
+
             return results
 
         # ── Direct plate scan (no vehicle detector configured or ready) ────────
         if self._detector.status == "ready":
-            return self._direct_plate_scan(frame)
+            results = self._direct_plate_scan(frame)
+            if not results and self._ocr_fallback_when_no_detections:
+                results.extend(self._fullframe_ocr(frame, reason="plate_detector_empty"))
+            return results
 
         # ── Whole-frame OCR fallback ───────────────────────────────────────────
         return self._fullframe_ocr(frame)
@@ -827,25 +860,64 @@ class ALPRRunner:
             results.extend(self._ocr_plate_box(frame, box))
         return results
 
-    def _fullframe_ocr(self, frame: np.ndarray) -> list[dict]:
-        """OCR-only fallback when no plate detector is available."""
+    def _fullframe_ocr(self, frame: np.ndarray, reason: str = "no_plate_detector") -> list[dict]:
+        """OCR-only fallback when plate detection returns nothing.
+
+        This is intentionally looser than the detector+OCR path. Real installs can
+        show small/distant plates, printed test plates, or partial garage-test views
+        where a vehicle detector has nothing to latch onto. We still validate that
+        the OCR text looks plate-like before surfacing it.
+        """
         if self._recognizer.status != "ready":
             return []
         results = []
-        for raw_text, ocr_conf in self._recognizer.recognize(frame):
+        threshold = max(min(self._fullframe_ocr_threshold, 0.95), 0.0)
+        variants = _fullframe_ocr_variants(frame)
+        texts: list[tuple[str, float]] = []
+        variant_name = "full"
+        for candidate_name, candidate in variants:
+            texts = self._recognizer.recognize(candidate)
+            if texts:
+                variant_name = candidate_name
+                break
+        if not texts:
+            self.last_debug_candidates.append({
+                "stage": "fullframe_ocr_empty",
+                "reason": reason,
+                "threshold": threshold,
+                "variants_tried": [name for name, _ in variants],
+            })
+        for raw_text, ocr_conf in texts:
             plate, corrected = _normalize_and_correct(raw_text)
-            if not validate_plate_candidate(plate):
+            valid = validate_plate_candidate(plate)
+            debug = {
+                "stage": "fullframe_ocr_candidate",
+                "reason": reason,
+                "raw_text": raw_text,
+                "variant": variant_name,
+                "plate": plate,
+                "corrected": corrected,
+                "ocr_confidence": round(float(ocr_conf), 3),
+                "threshold": threshold,
+                "valid_plate": valid,
+            }
+            if not valid:
+                debug["reject_reason"] = "plate failed validation"
+                self.last_debug_candidates.append(debug)
                 continue
-            threshold = max(self._conf_threshold, 0.80)
             if ocr_conf < threshold:
+                debug["reject_reason"] = "OCR confidence below fullframe threshold"
+                self.last_debug_candidates.append(debug)
                 continue
+            debug["accepted"] = True
+            self.last_debug_candidates.append(debug)
             results.append({
                 "plate": plate,
                 "confidence": round(ocr_conf * 0.7, 3),  # penalty for no detector
                 "bbox": None,
                 "frame_w": frame.shape[1],
                 "frame_h": frame.shape[0],
-                "source": "paddle_fullframe",
+                "source": "ocr_fullframe",
                 "raw_text": raw_text,
                 "corrected": corrected,
             })
