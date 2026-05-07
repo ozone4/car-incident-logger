@@ -36,7 +36,7 @@ storage:
 alpr:
   enabled: false
   confidence_threshold: 0.5    # minimum combined det+OCR confidence to report a plate
-  yolo_confidence_threshold: 0.1 # minimum YOLO box confidence before OCR crop
+  yolo_confidence_threshold: 0.01 # minimum YOLO box confidence before OCR crop
   yolo_imgsz: 640              # YOLO input size for plate detector (multiple of 32); vehicle cascade compensates — 640 is fast on CPU, use 1280 only with GPU
   vehicle_detection_enabled: true   # detect vehicles first, then search for plates within each vehicle crop (much better range)
   vehicle_model_path: yolov8n.pt    # COCO general detector; ultralytics auto-downloads ~6 MB on first run
