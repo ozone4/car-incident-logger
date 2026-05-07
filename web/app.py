@@ -466,7 +466,13 @@ def _live_alpr_loop() -> None:
             if best and best.get("plate") and _active:
                 sighting = _active.get(best["plate"])
                 if sighting:
-                    best = {**best, "bbox": sighting.get("bbox"), "frame_w": sighting.get("frame_w"), "frame_h": sighting.get("frame_h")}
+                    best = {
+                        **best,
+                        "bbox":            sighting.get("bbox"),
+                        "frame_w":         sighting.get("frame_w"),
+                        "frame_h":         sighting.get("frame_h"),
+                        "best_confidence": sighting.get("best_confidence", best.get("confidence", 0.0)),
+                    }
             _alpr_state["best"] = best
             _alpr_state["sightings"] = sightings
             _alpr_state["error"] = None

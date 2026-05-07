@@ -236,7 +236,7 @@ function CameraViewport({ overlays = true, frozen = false, best = null }) {
             const box = best.bbox;
             const fw = best.frame_w || 0;
             const fh = best.frame_h || 0;
-            const conf = best.confidence || 0;
+            const conf = (best.best_confidence ?? best.confidence) || 0;
             const style = (box && fw && fh) ? {
               left:   `${(box[0] / fw) * 100}%`,
               top:    `${(box[1] / fh) * 100}%`,
@@ -336,7 +336,7 @@ function TopBar({ view, setView, recording, muted, setMuted, recStatus }) {
 function TelemetryStrip({ alpr }) {
   const active    = (alpr.sightings || []).filter(s => s.status === "visible").length;
   const bestPlate = alpr.best ? alpr.best.plate : "—";
-  const bestConf  = alpr.best ? `${Math.round((alpr.best.confidence || 0) * 100)}%` : "—";
+  const bestConf  = alpr.best ? `${Math.round(((alpr.best.best_confidence ?? alpr.best.confidence) || 0) * 100)}%` : "—";
 
   return (
     <div className="telemetry">
@@ -809,7 +809,7 @@ function ControlsView({ recording, muted, setMuted, health, alpr, appliance }) {
         </div>
         <div className="ctl-bottom-meta">
           <Meta label="alpr status" value={alpr?.running ? "scanning" : "offline"} sub={alpr?.mode || "—"}/>
-          <Meta label="best plate"  value={bestPlate} sub={alpr?.best ? `${Math.round((alpr.best.confidence || 0) * 100)}% conf` : "no detection"}/>
+          <Meta label="best plate"  value={bestPlate} sub={alpr?.best ? `${Math.round(((alpr.best.best_confidence ?? alpr.best.confidence) || 0) * 100)}% conf` : "no detection"}/>
           <Meta label="disk free"   value={disk ? `${Number(disk.free_gb || 0).toFixed(0)} GB` : "—"} sub={disk ? `${disk.percent_used || 0}% used` : "loading"}/>
           <Meta label="power"       value={onBattery ? fmtDuration(appliance?.grace_remaining_seconds) : "AC"} sub={onBattery ? "until suspend" : `battery ${power.battery_percent ?? "—"}%`}/>
         </div>
