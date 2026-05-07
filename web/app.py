@@ -37,13 +37,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from modules.camera_capture import CameraCapture  # noqa: E402
-from modules.alpr_runner import ALPRRunner  # noqa: E402
+from modules.alpr_runner import ALPRRunner, _preprocess_crop  # noqa: E402
 from modules.config_manager import ConfigManager  # noqa: E402
 from modules.dashcam import DashcamRecorder  # noqa: E402
 from modules.health_monitor import HealthMonitor  # noqa: E402
 from modules.loop_recorder import LoopRecorder  # noqa: E402
 from modules.incident_trigger import WebTrigger  # noqa: E402
 from modules.multi_frame_voter import MultiFrameVoter  # noqa: E402
+from modules.gps_reader import GPSReader  # noqa: E402
 from modules.plate_database import PlateDatabase  # noqa: E402
 from modules.rolling_buffer import RollingBuffer  # noqa: E402
 from modules.recording_recovery import recover_recordings  # noqa: E402
@@ -308,6 +309,26 @@ def _set_alpr_state(**updates) -> None:
         _alpr_state["updated_at"] = time.time()
 
 
+def _save_plate_crop(frame, bbox: list, plate: str) -> Optional[str]:
+    """Save a 640px-wide JPEG of the plate crop. Returns the saved path or None."""
+    try:
+        if bbox is None or frame is None:
+            return None
+        x1, y1, x2, y2 = bbox
+        crop = _preprocess_crop(frame, x1, y1, x2, y2, pad_ratio=0.18, for_ocr=False)
+        cfg = _load_config()
+        out_dir = Path(cfg.storage_base_path) / "sightings" / plate.upper()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        ts_ms = int(time.time() * 1000)
+        path = out_dir / f"{ts_ms}.jpg"
+        cv2.imwrite(str(path), crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        logger.debug("Saved plate crop: %s", path)
+        return str(path)
+    except Exception as exc:
+        logger.warning("Could not save plate crop for %s: %s", plate, exc)
+        return None
+
+
 def _format_elapsed(seconds: float) -> str:
     if seconds < 1:
         return "now"
@@ -317,6 +338,14 @@ def _format_elapsed(seconds: float) -> str:
 
 
 def _new_sighting(plate: str, det: dict, now: float) -> dict:
+    history = None
+    db = _get_db()
+    if db is not None:
+        try:
+            history = db.get_plate_history(plate)
+        except Exception as exc:
+            logger.debug("Could not fetch plate history for %s: %s", plate, exc)
+
     return {
         "id": f"{plate}-{int(now * 1000)}",
         "plate": plate,
@@ -331,6 +360,9 @@ def _new_sighting(plate: str, det: dict, now: float) -> dict:
         "last_seen": now,
         "seen_count": 1,
         "active": True,
+        "history": history,
+        "snapshot_path": None,
+        "_needs_snapshot": True,
     }
 
 
@@ -356,6 +388,8 @@ def _serialize_sighting(sighting: dict, now: float) -> dict:
         "age_seconds": round(now - first_seen, 1),
         "last_seen_seconds_ago": round(now - last_seen, 1),
         "last_seen_label": _format_elapsed(now - last_seen),
+        "history": sighting.get("history"),
+        "snapshot_path": sighting.get("snapshot_path"),
     }
 
 
@@ -376,10 +410,13 @@ def _update_plate_sightings(detections: list[dict], now: float) -> tuple[dict, l
             sighting["last_seen"] = now
             sighting["seen_count"] = int(sighting.get("seen_count", 0)) + 1
             sighting["confidence"] = float(det.get("confidence", sighting.get("confidence", 0.0)))
-            sighting["best_confidence"] = max(
+            new_best = max(
                 float(sighting.get("best_confidence", 0.0)),
                 float(det.get("confidence", 0.0)),
             )
+            if new_best > float(sighting.get("best_confidence", 0.0)):
+                sighting["best_confidence"] = new_best
+                sighting["_needs_snapshot"] = True
             sighting["raw_text"] = (det.get("raw_text") or sighting.get("raw_text") or "").strip()
             sighting["bbox"] = det.get("bbox") or sighting.get("bbox")
             if det.get("frame_w"):
@@ -432,6 +469,16 @@ def _live_alpr_loop() -> None:
     scan_interval = max(0.0, float(cfg.alpr_scan_interval))
     voter = MultiFrameVoter(min_votes=1)
 
+    # GPS reader — gracefully disabled if hardware/config absent
+    try:
+        raw_cfg = yaml.safe_load(_config_path().read_text()) or {}
+        gps_cfg = raw_cfg.get("gps", {})
+    except Exception:
+        gps_cfg = {}
+    gps = GPSReader(gps_cfg)
+
+    db = _get_db()
+
     while not _alpr_stop_event.is_set():
         with _camera_lock:
             cam = _camera
@@ -457,9 +504,17 @@ def _live_alpr_loop() -> None:
         latest = detections[0] if detections else None
         best = voter.get_best()
 
+        needs_snap: dict = {}
         with _alpr_lock:
             now = time.time()
             _active, _recent, sightings = _update_plate_sightings(detections, now)
+
+            # Collect plates whose best_confidence just improved (snapshot needed)
+            for plate_key, s in _active.items():
+                if s.get("_needs_snapshot"):
+                    s["_needs_snapshot"] = False
+                    needs_snap[plate_key] = (s.get("bbox"), s.get("best_confidence", 0.0))
+
             _alpr_state["frames_scanned"] = int(_alpr_state.get("frames_scanned", 0)) + 1
             _alpr_state["detections_seen"] = int(_alpr_state.get("detections_seen", 0)) + len(detections)
             _alpr_state["latest"] = latest
@@ -477,6 +532,28 @@ def _live_alpr_loop() -> None:
             _alpr_state["sightings"] = sightings
             _alpr_state["error"] = None
             _alpr_state["updated_at"] = now
+
+        # I/O outside the lock: save crops + persist sightings to DB
+        if needs_snap:
+            loc = gps.get_location()
+            for plate_key, (bbox, best_conf) in needs_snap.items():
+                snap_path = _save_plate_crop(frame, bbox, plate_key)
+                if snap_path:
+                    with _alpr_lock:
+                        active_now = _alpr_state.get("active_sightings", {})
+                        if plate_key in active_now:
+                            active_now[plate_key]["snapshot_path"] = snap_path
+                if db is not None:
+                    try:
+                        db.add_sighting(
+                            plate=plate_key,
+                            confidence=best_conf,
+                            snapshot_path=snap_path,
+                            latitude=loc["lat"] if loc else None,
+                            longitude=loc["lon"] if loc else None,
+                        )
+                    except Exception as exc:
+                        logger.debug("Could not persist sighting for %s: %s", plate_key, exc)
 
         _alpr_stop_event.wait(scan_interval)
 
@@ -782,6 +859,26 @@ def alpr_status_api():
         and info.get("model_exists", False)
     )
     return jsonify(info)
+
+
+@app.route("/sightings/image")
+def sightings_image():
+    """Serve a saved plate crop JPEG by its absolute path (read-only, within data dir)."""
+    path_str = request.args.get("path", "")
+    if not path_str:
+        return "missing path", 400
+    path = Path(path_str).resolve()
+    # Safety: only serve files under the project data directory
+    try:
+        cfg = _load_config()
+        allowed_root = Path(cfg.storage_base_path).resolve()
+    except Exception:
+        allowed_root = (PROJECT_ROOT / "data").resolve()
+    if not str(path).startswith(str(allowed_root)):
+        return "forbidden", 403
+    if not path.exists() or not path.is_file():
+        return "not found", 404
+    return send_file(str(path), mimetype="image/jpeg")
 
 
 @app.route("/alpr/live/status")

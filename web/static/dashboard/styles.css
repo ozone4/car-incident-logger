@@ -565,6 +565,16 @@ body {
 }
 .sight-flag svg { width: 10px; height: 10px; color: var(--danger); }
 .sight-ago { font-family: var(--font-mono); font-size: 9px; color: var(--muted); letter-spacing: 0.06em; }
+.sight-history {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 8px; color: var(--muted);
+  padding-bottom: 2px;
+}
+.sight-hist-incidents { color: var(--warn); }
+.sight-hist-snap { display: inline-flex; align-items: center; color: var(--muted); cursor: pointer; text-decoration: none; }
+.sight-hist-snap:hover { color: var(--ink-soft); }
+.sight-hist-snap svg { width: 9px; height: 9px; }
 
 /* ── Appliance power panel ────────────────────────────────── */
 .appliance {

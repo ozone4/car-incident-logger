@@ -139,7 +139,22 @@ function transformSightings(sightings) {
     active: s.status === "visible",
     count: s.seen_count,
     region: (s.plate || "").replace(/\s/g, "").slice(0, 2),
+    history: s.history || null,
+    snapshot_path: s.snapshot_path || null,
   }));
+}
+
+function formatHistoryAge(isoStr) {
+  if (!isoStr) return null;
+  try {
+    const d = new Date(isoStr);
+    if (isNaN(d)) return null;
+    const sec = (Date.now() - d.getTime()) / 1000;
+    if (sec < 60) return "moments ago";
+    if (sec < 3600) return `${Math.round(sec / 60)}m ago`;
+    if (sec < 86400) return `${Math.round(sec / 3600)}h ago`;
+    return `${Math.round(sec / 86400)}d ago`;
+  } catch { return null; }
 }
 
 function fmtDuration(seconds) {
@@ -381,18 +396,36 @@ function SightingsPanel({ rows, running }) {
             <span className="sight-plate mono muted">no plates detected</span>
           </li>
         )}
-        {rows.map((r, i) => (
-          <li key={i} className={`sight-row ${r.active ? "is-active" : ""} ${r.flagged ? "is-flag" : ""}`}>
-            <span className="sight-plate mono">{r.plate}</span>
-            <span className="sight-meta">
-              <span className="sight-conf fig">{Math.round((r.confidence || 0) * 100)}<span className="muted">%</span></span>
-              <span className="sight-count mono">×{r.count}</span>
-              <span className="sight-region mono">{r.region}</span>
-              {r.flagged && <span className="sight-flag"><Icons.flag/></span>}
-            </span>
-            <span className="sight-ago mono">{r.ago}</span>
-          </li>
-        ))}
+        {rows.map((r, i) => {
+          const hist = r.history;
+          const histAge = hist && hist.total_sightings > 0 ? formatHistoryAge(hist.last_seen) : null;
+          const showHistory = hist && hist.total_sightings > 0 && histAge;
+          return (
+            <li key={i} className={`sight-row ${r.active ? "is-active" : ""} ${r.flagged ? "is-flag" : ""}`}>
+              <span className="sight-plate mono">{r.plate}</span>
+              <span className="sight-meta">
+                <span className="sight-conf fig">{Math.round((r.confidence || 0) * 100)}<span className="muted">%</span></span>
+                <span className="sight-count mono">×{r.count}</span>
+                <span className="sight-region mono">{r.region}</span>
+                {r.flagged && <span className="sight-flag"><Icons.flag/></span>}
+              </span>
+              <span className="sight-ago mono">{r.ago}</span>
+              {showHistory && (
+                <span className="sight-history">
+                  <span>Last seen {histAge}</span>
+                  {hist.total_incidents > 0 && (
+                    <span className="sight-hist-incidents">· {hist.total_incidents} incident{hist.total_incidents !== 1 ? "s" : ""}</span>
+                  )}
+                  {hist.last_snapshot_path && (
+                    <a className="sight-hist-snap" href={`/sightings/image?path=${encodeURIComponent(hist.last_snapshot_path)}`} target="_blank" rel="noreferrer" title="View last snapshot">
+                      <Icons.camera/>
+                    </a>
+                  )}
+                </span>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

@@ -105,6 +105,12 @@ notifier:
   chime_file: ./data/config/chime.wav
   console_alerts: true
 
+gps:
+  enabled: false        # set true when GPS hardware is connected
+  host: localhost       # gpsd host
+  port: 2947            # gpsd port
+  use_gpsd: true        # prefer gpsd over direct serial
+
 logging:
   level: INFO              # DEBUG, INFO, WARNING, ERROR
   file: ./data/logs/system.log

@@ -82,6 +82,16 @@ class PlateDatabase:
             CREATE INDEX IF NOT EXISTS idx_sightings_plate  ON sightings(plate);
         """)
         conn.commit()
+
+        # Migrate: add GPS columns if they don't exist yet (safe on existing DBs)
+        for col, typedef in [("latitude", "REAL"), ("longitude", "REAL")]:
+            try:
+                conn.execute(f"ALTER TABLE sightings ADD COLUMN {col} {typedef}")
+                conn.commit()
+                logger.info("DB migration: added sightings.%s", col)
+            except Exception:
+                pass  # column already exists
+
         logger.debug("Database schema ready at %s", self.db_path)
 
     # ── Plates ────────────────────────────────────────────────────────────────
@@ -170,17 +180,65 @@ class PlateDatabase:
         plate: str,
         confidence: float,
         snapshot_path: Optional[str] = None,
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
     ) -> int:
         plate = plate.upper().strip()
         matched = 1 if self.is_known_plate(plate) else 0
         conn = self._conn()
         cur = conn.execute(
-            "INSERT INTO sightings (plate, timestamp, confidence, snapshot_path, matched) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (plate, _utcnow(), confidence, snapshot_path, matched),
+            "INSERT INTO sightings (plate, timestamp, confidence, snapshot_path, matched, latitude, longitude) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (plate, _utcnow(), confidence, snapshot_path, matched, latitude, longitude),
         )
         conn.commit()
         return cur.lastrowid  # type: ignore[return-value]
+
+    def get_plate_history(self, plate: str) -> Dict[str, Any]:
+        """Return a summary of all sightings and incidents for a plate.
+
+        Always returns a dict (never None) so callers can safely read keys.
+        """
+        plate = plate.upper().strip()
+        conn = self._conn()
+
+        row = conn.execute(
+            "SELECT COUNT(*) as total, MIN(timestamp) as first_seen, MAX(timestamp) as last_seen "
+            "FROM sightings WHERE plate = ?",
+            (plate,),
+        ).fetchone()
+        total_sightings = int(row["total"]) if row else 0
+        first_seen = row["first_seen"] if row else None
+        last_seen = row["last_seen"] if row else None
+
+        # Incident count from the plates table (already maintained by _upsert_plate)
+        plate_row = conn.execute(
+            "SELECT incident_count FROM plates WHERE plate = ?", (plate,)
+        ).fetchone()
+        total_incidents = int(plate_row["incident_count"]) if plate_row else 0
+
+        # Most recent sighting with GPS + snapshot
+        latest = conn.execute(
+            "SELECT latitude, longitude, snapshot_path FROM sightings "
+            "WHERE plate = ? ORDER BY timestamp DESC LIMIT 1",
+            (plate,),
+        ).fetchone()
+
+        last_location = None
+        last_snapshot_path = None
+        if latest:
+            if latest["latitude"] is not None and latest["longitude"] is not None:
+                last_location = {"lat": latest["latitude"], "lon": latest["longitude"]}
+            last_snapshot_path = latest["snapshot_path"]
+
+        return {
+            "total_sightings": total_sightings,
+            "total_incidents": total_incidents,
+            "first_seen": first_seen,
+            "last_seen": last_seen,
+            "last_location": last_location,
+            "last_snapshot_path": last_snapshot_path,
+        }
 
     def get_sightings_for_plate(self, plate: str, limit: int = 50) -> List[Dict[str, Any]]:
         plate = plate.upper().strip()

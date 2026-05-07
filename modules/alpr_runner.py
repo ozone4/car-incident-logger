@@ -371,9 +371,19 @@ class _FastPlateOCRRecognizer(_BaseRecognizer):
 # ---------------------------------------------------------------------------
 
 def _preprocess_crop(
-    frame: np.ndarray, x1: int, y1: int, x2: int, y2: int, pad_ratio: float = 0.08
+    frame: np.ndarray,
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    pad_ratio: float = 0.08,
+    for_ocr: bool = True,
 ) -> np.ndarray:
-    """Crop a plate region with padding, upscale if too small for OCR."""
+    """Crop a plate region with padding.
+
+    for_ocr=True  — pad only; FastPlateOCR handles its own internal resize.
+    for_ocr=False — pad + upscale to 640px wide (LANCZOS4) for human-readable snapshots.
+    """
     h, w = frame.shape[:2]
     bw = max(1, x2 - x1)
     bh = max(1, y2 - y1)
@@ -385,19 +395,21 @@ def _preprocess_crop(
     y2 = min(h, y2 + pad_y)
     crop = frame[y1:y2, x1:x2]
 
-    ch, cw = crop.shape[:2]
-    if cw < 480 and cw > 0:
-        try:
-            import cv2  # noqa: PLC0415
-            scale = 480 / cw
-            interp = getattr(cv2, "INTER_CUBIC", 2)
-            crop = cv2.resize(
-                crop,
-                (int(cw * scale), int(ch * scale)),
-                interpolation=interp,
-            )
-        except (ImportError, Exception):  # noqa: BLE001
-            pass
+    if not for_ocr:
+        ch, cw = crop.shape[:2]
+        target_w = 640
+        if cw > 0 and cw < target_w:
+            try:
+                import cv2  # noqa: PLC0415
+                scale = target_w / cw
+                crop = cv2.resize(
+                    crop,
+                    (target_w, int(ch * scale)),
+                    interpolation=cv2.INTER_LANCZOS4,
+                )
+            except (ImportError, Exception):  # noqa: BLE001
+                pass
+
     return crop
 
 
