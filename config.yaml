@@ -41,6 +41,7 @@ alpr:
   vehicle_detection_enabled: true   # detect vehicles first, then search for plates within each vehicle crop (much better range)
   vehicle_model_path: yolov8n.pt    # COCO general detector; ultralytics auto-downloads ~6 MB on first run
   vehicle_confidence_threshold: 0.3
+  vehicle_imgsz: 640               # vehicle detector input size; 640 is sufficient (cars are large objects)
   vehicle_fallback_to_fullframe: true  # if no vehicles detected, fall back to direct full-frame plate scan
   ocr_fallback_when_no_detections: true  # if YOLO finds no plate boxes, try whole-frame OCR for small/test plates
   fullframe_ocr_confidence_threshold: 0.60

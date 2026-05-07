@@ -215,6 +215,23 @@ function CameraViewport({ overlays = true, frozen = false, best = null }) {
 
       {overlays && (
         <>
+          {best && best.vehicle_bbox && (() => {
+            const vbox = best.vehicle_bbox;
+            const fw = best.frame_w || 0;
+            const fh = best.frame_h || 0;
+            if (!vbox || !fw || !fh) return null;
+            return (
+              <div className="vehicle-box" style={{
+                left:   `${(vbox[0] / fw) * 100}%`,
+                top:    `${(vbox[1] / fh) * 100}%`,
+                width:  `${((vbox[2] - vbox[0]) / fw) * 100}%`,
+                height: `${((vbox[3] - vbox[1]) / fh) * 100}%`,
+              }}>
+                <span className="vehicle-tag">{best.vehicle_type || "vehicle"}</span>
+              </div>
+            );
+          })()}
+
           {best && best.plate && (() => {
             const box = best.bbox;
             const fw = best.frame_w || 0;
@@ -227,7 +244,7 @@ function CameraViewport({ overlays = true, frozen = false, best = null }) {
               height: `${((box[3] - box[1]) / fh) * 100}%`,
             } : {};
             return (
-              <div className={`alpr-box${conf >= 0.8 ? " alpr-box--locked" : ""}`} style={style}>
+              <div className="alpr-box" style={style}>
                 <span className="alpr-tag">
                   <span className="alpr-pulse"></span>
                   {best.plate}&nbsp;<span className="alpr-conf">{Math.round(conf * 100)}%</span>

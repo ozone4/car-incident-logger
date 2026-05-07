@@ -333,32 +333,47 @@ body {
 .feed .t2 { left: 14%; bottom: 44%; }
 .feed .t3 { left: 26%; bottom: 47%; transform: scale(0.6); }
 
-/* Overlays — military targeting */
+/* Overlays — vehicle box (blue) and plate box (green) */
+.vehicle-box {
+  position: absolute;
+  border: 1.5px solid #4a9eff;
+  pointer-events: none;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.5), 0 0 20px rgba(74,158,255,.3);
+  transition: left 0.12s ease-out, top 0.12s ease-out,
+              width 0.12s ease-out, height 0.12s ease-out;
+}
+.vehicle-box::before, .vehicle-box::after {
+  content: ""; position: absolute; width: 12px; height: 12px;
+  border: 2px solid #4a9eff;
+}
+.vehicle-box::before { top: -3px; left: -3px;  border-right: 0; border-bottom: 0; }
+.vehicle-box::after  { top: -3px; right: -3px; border-left: 0;  border-bottom: 0; }
+.vehicle-tag {
+  position: absolute; left: 0; top: -20px;
+  display: inline-flex; align-items: center;
+  background: #4a9eff; color: #0d1117;
+  font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+  padding: 2px 8px; letter-spacing: 0.08em; text-transform: uppercase;
+}
+
 .alpr-box {
   position: absolute;
-  border: 1.5px solid var(--accent);
+  border: 1.5px solid #5dce8f;
   pointer-events: none;
-  box-shadow: 0 0 0 1px rgba(0,0,0,.5), 0 0 24px var(--accent-glow);
+  box-shadow: 0 0 0 1px rgba(0,0,0,.5), 0 0 24px rgba(93,206,143,.4);
   transition: left 0.12s ease-out, top 0.12s ease-out,
               width 0.12s ease-out, height 0.12s ease-out;
 }
 .alpr-box::before, .alpr-box::after {
   content: ""; position: absolute; width: 12px; height: 12px;
-  border: 2px solid var(--accent);
+  border: 2px solid #5dce8f;
 }
 .alpr-box::before { top: -3px; left: -3px;  border-right: 0; border-bottom: 0; }
 .alpr-box::after  { top: -3px; right: -3px; border-left: 0;  border-bottom: 0; }
-.alpr-box--locked {
-  border-color: #5dce8f;
-  box-shadow: 0 0 0 1px rgba(0,0,0,.5), 0 0 24px rgba(93,206,143,.4);
-}
-.alpr-box--locked::before,
-.alpr-box--locked::after { border-color: #5dce8f; }
-.alpr-box--locked .alpr-tag { background: #5dce8f; color: #0d1117; }
 .alpr-tag {
   position: absolute; left: 0; top: -22px;
   display: inline-flex; align-items: center; gap: 6px;
-  background: var(--accent); color: #fff;
+  background: #5dce8f; color: #0d1117;
   font-family: var(--font-mono); font-size: 10px; font-weight: 600;
   padding: 3px 8px; letter-spacing: 0.08em;
   text-transform: uppercase;

@@ -150,6 +150,10 @@ class ConfigManager:
         return bool(self.get("alpr", "vehicle_fallback_to_fullframe", default=True))
 
     @property
+    def alpr_vehicle_imgsz(self) -> int:
+        return int(self.get("alpr", "vehicle_imgsz", default=640))
+
+    @property
     def alpr_ocr_fallback_when_no_detections(self) -> bool:
         return bool(self.get("alpr", "ocr_fallback_when_no_detections", default=True))
 

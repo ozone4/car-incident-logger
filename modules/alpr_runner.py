@@ -640,10 +640,11 @@ class ALPRRunner:
         if vehicle_detector is not None:
             self._vehicle_detector: _VehicleDetector | None = vehicle_detector
         elif cfg.get("vehicle_detection_enabled", True):
+            vehicle_imgsz = int(cfg.get("vehicle_imgsz", 640))
             self._vehicle_detector = _VehicleDetector(
                 model_path=cfg.get("vehicle_model_path", "yolov8n.pt"),
                 conf_threshold=float(cfg.get("vehicle_confidence_threshold", 0.3)),
-                imgsz=self._yolo_imgsz,
+                imgsz=vehicle_imgsz,
             )
         else:
             self._vehicle_detector = None

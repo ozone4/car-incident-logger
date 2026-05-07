@@ -296,6 +296,7 @@ def _alpr_config() -> dict:
         "vehicle_model_path": cfg.alpr_vehicle_model_path,
         "vehicle_confidence_threshold": cfg.alpr_vehicle_confidence_threshold,
         "vehicle_fallback_to_fullframe": cfg.alpr_vehicle_fallback_to_fullframe,
+        "vehicle_imgsz": cfg.alpr_vehicle_imgsz,
         "ocr_fallback_when_no_detections": cfg.alpr_ocr_fallback_when_no_detections,
         "fullframe_ocr_confidence_threshold": cfg.alpr_fullframe_ocr_confidence_threshold,
     }
@@ -446,7 +447,12 @@ def _live_alpr_loop() -> None:
             continue
 
         frame, _ts = result
-        detections = runner.run_on_frame(frame)
+        try:
+            detections = runner.run_on_frame(frame)
+        except Exception as exc:
+            logger.warning("ALPR run_on_frame failed: %s", exc)
+            _alpr_stop_event.wait(scan_interval)
+            continue
         voter.add_frame(detections)
         latest = detections[0] if detections else None
         best = voter.get_best()
