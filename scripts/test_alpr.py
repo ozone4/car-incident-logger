@@ -175,7 +175,7 @@ def cmd_camera(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Test the ALPR pipeline (YOLO + PaddleOCR)",
+        description="Test the ALPR pipeline (YOLO + FastPlateOCR)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"

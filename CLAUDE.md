@@ -31,7 +31,7 @@ main.py / web/app.py              Orchestrator + Flask dashboard/API
   ├── CameraCapture               Background thread: reads USB camera frames into a queue
   ├── RollingBuffer               Consumes frame queue into pre-roll buffer
   ├── DashcamRecorder             Saves incident clips + metadata from rolling buffer
-  ├── ALPRRunner                  YOLO/EasyOCR/PaddleOCR plate recognition with fallback modes
+  ├── ALPRRunner                  YOLO/FastPlateOCR plate recognition with fallback modes
   ├── LiveMatcher                 Background ALPR scanning / known-plate matching
   ├── PlateDatabase               SQLite with incidents/sightings/known vehicles
   ├── GPSReader                   GPS state from gpsd; should gain serial NMEA fallback

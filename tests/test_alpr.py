@@ -1,7 +1,7 @@
 """
 tests/test_alpr.py — Tests for ALPR utilities.
 
-All tests pass without ultralytics or PaddleOCR installed.
+All tests pass without ultralytics or FastPlateOCR installed.
 Covers: normalization, OCR corrections, validation, no-dep runner behavior,
         multi-frame voting.
 """
@@ -158,7 +158,7 @@ class TestValidatePlateCandidate:
 # ---------------------------------------------------------------------------
 
 class TestALPRRunnerNoDeps:
-    """These tests pass whether or not ultralytics/PaddleOCR are installed."""
+    """These tests pass whether or not ultralytics/FastPlateOCR are installed."""
 
     def test_initialize_does_not_raise(self):
         runner = ALPRRunner({})
@@ -218,7 +218,7 @@ class TestALPRRunnerNoDeps:
         results = runner.run_on_frame(frame)
         assert len(results) == 1
         assert results[0]["plate"] == "ABC123"
-        assert results[0]["source"] == "yolo+paddle"
+        assert results[0]["source"] == "yolo+fastocr"
 
     def test_custom_recognizer_fullframe_fallback(self):
         """When detector status is not ready, uses whole-frame OCR."""
@@ -254,8 +254,8 @@ class TestALPRRunnerNoDeps:
         # Actually 0.92 >= 0.80 so it passes
         assert isinstance(results, list)
 
-    def test_fullframe_ocr_fallback_when_detector_finds_no_boxes(self):
-        """A ready detector with no boxes falls back to whole-frame OCR for small/test plates."""
+    def test_no_detector_no_fullframe_ocr_with_fastplateocr(self):
+        """FastPlateOCR needs cropped plates, so no-detector mode returns no full-frame guesses."""
         from modules.alpr_runner import _BaseDetector, _BaseRecognizer
 
         class _EmptyDetector(_BaseDetector):
@@ -267,38 +267,6 @@ class TestALPRRunnerNoDeps:
                 return []
 
         class _StubRecognizer(_BaseRecognizer):
-            def initialize(self):
-                self.status = "ready"
-                return True
-
-            def recognize(self, image):
-                return [("634-XSG", 0.91)]
-
-        runner = ALPRRunner(
-            {"confidence_threshold": 0.3, "fullframe_ocr_confidence_threshold": 0.60},
-            detector=_EmptyDetector(),
-            recognizer=_StubRecognizer(),
-        )
-        runner.initialize()
-        frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        results = runner.run_on_frame(frame)
-        assert len(results) == 1
-        assert results[0]["plate"] == "634XSG"
-        assert results[0]["source"] == "ocr_fullframe"
-
-    def test_fullframe_ocr_tries_upscaled_variants(self):
-        """Whole-frame fallback tries enhanced variants before giving up."""
-        from modules.alpr_runner import _BaseDetector, _BaseRecognizer
-
-        class _EmptyDetector(_BaseDetector):
-            def initialize(self):
-                self.status = "ready"
-                return True
-
-            def detect(self, frame):
-                return []
-
-        class _VariantRecognizer(_BaseRecognizer):
             def __init__(self):
                 self.calls = 0
 
@@ -308,20 +276,71 @@ class TestALPRRunnerNoDeps:
 
             def recognize(self, image):
                 self.calls += 1
-                return [] if self.calls == 1 else [("634-XSG", 0.91)]
+                return [("634-XSG", 0.91)]
 
-        recognizer = _VariantRecognizer()
+        recognizer = _StubRecognizer()
         runner = ALPRRunner(
             {"confidence_threshold": 0.3, "fullframe_ocr_confidence_threshold": 0.60},
             detector=_EmptyDetector(),
             recognizer=recognizer,
         )
         runner.initialize()
-        frame = np.zeros((120, 160, 3), dtype=np.uint8)
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
         results = runner.run_on_frame(frame)
-        assert recognizer.calls >= 2
+        assert results == []
+        assert recognizer.calls == 0
+
+    def test_vehicle_heuristic_ocr_reads_cropped_vehicle_region(self):
+        """When vehicle boxes are available, FastPlateOCR can run on likely plate crops."""
+        from modules.alpr_runner import _BaseDetector, _BaseRecognizer, _VehicleDetector
+
+        class _UnavailableDetector(_BaseDetector):
+            def initialize(self):
+                self.status = "unavailable"
+                self.error = "plate detector unavailable"
+                return False
+
+            def detect(self, frame):
+                return []
+
+        class _VehicleStub(_VehicleDetector):
+            def __init__(self):
+                self.status = "uninitialized"
+                self.error = None
+
+            def initialize(self):
+                self.status = "ready"
+                return True
+
+            def detect(self, frame):
+                return [{"bbox": [20, 20, 220, 180], "confidence": 0.9, "vehicle_type": "car"}]
+
+        class _StubRecognizer(_BaseRecognizer):
+            def __init__(self):
+                self.calls = 0
+
+            def initialize(self):
+                self.status = "ready"
+                return True
+
+            def recognize(self, image):
+                self.calls += 1
+                return [("634-XSG", 0.91)]
+
+        recognizer = _StubRecognizer()
+        runner = ALPRRunner(
+            {"confidence_threshold": 0.3, "fullframe_ocr_confidence_threshold": 0.60},
+            detector=_UnavailableDetector(),
+            recognizer=recognizer,
+            vehicle_detector=_VehicleStub(),
+        )
+        runner.initialize()
+        frame = np.zeros((240, 320, 3), dtype=np.uint8)
+        results = runner.run_on_frame(frame)
+        assert recognizer.calls == 1
         assert len(results) == 1
         assert results[0]["plate"] == "634XSG"
+        assert results[0]["source"] == "vehicle+fastocr_heuristic"
 
     def test_detection_dict_format(self):
         """Verify returned dicts have expected keys."""

@@ -14,7 +14,7 @@
 | Rolling in-memory buffer (45s) | Done | Frames in deque, not persisted to disk |
 | Manual incident trigger (keyboard/GPIO) | Done | Button press records voice note + clip |
 | Voice note transcription (faster-whisper) | Done | NATO phonetic plate parsing |
-| ALPR pipeline (YOLO + PaddleOCR) | Done | Multi-frame voter, known vehicle suppression |
+| ALPR pipeline (YOLO + FastPlateOCR) | Done | Multi-frame voter, known vehicle suppression |
 | Live ALPR sightings dashboard | Done | Real-time plate tracking in web UI |
 | Web UI (Flask) | Done | Camera preview, incidents list, config editor |
 | Dashcam clip capture | Done | Pre-roll + post-roll on web trigger |
@@ -38,7 +38,7 @@
 | **System service / auto-start** | Medium | Start recording on boot, restart on crash |
 | **Multi-camera (front + rear)** | Low | Significant architecture change |
 | **Night mode / image enhancement** | Low | Camera-level settings, HDR |
-| **Windows-friendly operation** | Low | PaddleOCR issues, path handling, service model |
+| **Windows-friendly operation** | Low | Path handling, service model |
 
 ---
 

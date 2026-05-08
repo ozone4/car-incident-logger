@@ -25,7 +25,7 @@ class TestHealthMonitor:
             camera_running=True,
             dashcam_buffer_armed=True,
             loop_recorder_status={"recording": True, "segments_completed": 5},
-            alpr_state={"running": True, "ready": True, "mode": "yolo+paddle", "error": None},
+            alpr_state={"running": True, "ready": True, "mode": "yolo+fastocr", "error": None},
             storage_status={"running": True, "total_deleted": 0, "recording_count": 10},
         )
 

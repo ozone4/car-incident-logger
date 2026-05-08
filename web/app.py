@@ -847,20 +847,13 @@ def alpr_status_api():
         info["detector"] = "unavailable"
         info["detector_hint"] = "pip install ultralytics"
 
-    # Check paddleocr
+    # Check FastPlateOCR (OCR engine)
     try:
-        import paddleocr  # noqa: F401
+        import fast_plate_ocr  # noqa: F401
         info["ocr"] = "available"
     except ImportError:
         info["ocr"] = "unavailable"
-        info["ocr_hint"] = "pip install paddlepaddle paddleocr"
-
-    try:
-        import easyocr  # noqa: F401
-        info["ocr_fallback"] = "available"
-    except ImportError as exc:
-        info["ocr_fallback"] = "unavailable"
-        info["ocr_fallback_hint"] = f"easyocr import failed: {exc}; run pip install easyocr in the active venv"
+        info["ocr_hint"] = "pip install fast-plate-ocr"
 
     # Check model file
     try:

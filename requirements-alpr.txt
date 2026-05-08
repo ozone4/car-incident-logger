@@ -5,33 +5,22 @@
 #
 #   pip install -r requirements-alpr.txt      # everything below
 #   pip install ultralytics                    # YOLO detector only
-#   pip install paddlepaddle paddleocr         # PaddleOCR only (CPU)
+#   pip install fast-plate-ocr                 # OCR only
 #
+# Note: PaddleOCR/PaddlePaddle were intentionally removed. They were fragile to
+# install on newer Python/Windows builds and were less reliable for North
+# American licence plates than FastPlateOCR.
+
 # ── Plate detector ────────────────────────────────────────────────────────────
 # YOLO via ultralytics — detects plate bounding boxes in each frame.
 # After install, download a plate-specific model and set alpr.yolo_model_path
-# in config.yaml.  A general YOLOv8n will detect vehicles but not plates;
+# in config.yaml. A general YOLOv8n will detect vehicles but not plates;
 # a fine-tuned plate detector gives much better results.
 ultralytics>=8.0.0
 
 # ── OCR engine ────────────────────────────────────────────────────────────────
-# PaddleOCR — reads text from cropped plate regions.
-# PaddlePaddle (the framework) must be installed first.
-#
-# CPU (all platforms):
-paddlepaddle>=2.6.0
-paddleocr>=2.7.0
-
-# Optional fallback OCR for cropped plates when PaddleOCR returns no text.
-# This is NOT used as full-frame OCR; it only reads YOLO plate crops.
-easyocr>=1.7.0
-
-# GPU (CUDA 11.x — uncomment and comment out the CPU line above):
-# paddlepaddle-gpu>=2.6.0
-#
-# Windows note: if pip install paddlepaddle fails, try:
-#   pip install paddlepaddle -f https://www.paddlepaddle.org.cn/whl/windows/mkl/avx/stable.html
-# Or use the CPU wheel from the PaddlePaddle release page.
+# FastPlateOCR — ONNX OCR optimized for licence plates.
+fast-plate-ocr>=0.2.0
 
 # ── Image utilities ───────────────────────────────────────────────────────────
 # Pillow is often already installed; listed here for completeness.

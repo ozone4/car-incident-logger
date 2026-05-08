@@ -297,7 +297,7 @@ Tests cover:
 - Database add/retrieve/search/delete operations
 - ALPR normalization, OCR corrections, plate validation
 - Multi-frame voting logic
-- ALPRRunner behavior when deps are missing (no ultralytics/PaddleOCR needed)
+- ALPRRunner behavior when deps are missing (no ultralytics/FastPlateOCR needed)
 
 ---
 
@@ -323,7 +323,7 @@ car-incident-logger/
 │   ├── loop_recorder.py         # Continuous loop recording to disk in segments
 │   ├── overlay.py               # Timestamp overlay for recorded frames
 │   ├── incident_trigger.py      # Abstract trigger interface (web, hardware, ALPR)
-│   ├── alpr_runner.py           # Phase 2: YOLO+PaddleOCR pipeline (deps optional)
+│   ├── alpr_runner.py           # Phase 2: YOLO+FastPlateOCR pipeline (deps optional)
 │   ├── multi_frame_voter.py     # Phase 2: aggregate candidates across frames
 │   └── live_matcher.py          # Phase 2 stub: background known-plate alerting
 ├── data/
@@ -338,7 +338,7 @@ car-incident-logger/
 │   ├── setup_db.py              # DB schema init
 │   └── test_alpr.py             # ALPR pipeline test (--image / --camera / --status)
 ├── requirements.txt             # Core deps (no heavy ALPR libs)
-├── requirements-alpr.txt        # Optional ALPR deps (ultralytics, paddleocr)
+├── requirements-alpr.txt        # Optional ALPR deps (ultralytics, fast-plate-ocr)
 └── tests/
     ├── test_phonetic_parser.py
     ├── test_plate_database.py
@@ -420,7 +420,7 @@ Once optional ALPR dependencies and `data/models/plate_detector.pt` are installe
 ### Windows notes
 
 - Core camera/UI features are tested with Python 3.10+ on Windows 10/11.
-- **ALPR note:** PaddlePaddle does not currently publish Windows wheels for Python 3.14. For ALPR, use Python **3.11 or 3.12**.
+- **ALPR note:** ALPR now uses FastPlateOCR instead of PaddleOCR to avoid PaddlePaddle install/runtime issues.
 - No external services required — everything runs locally.
 - Use `python` on your Windows PC; the `py` launcher may not be installed.
 - Camera device index: plug in your USB camera, start the web UI, go to `/camera`, and click **Start Preview**. If the wrong camera opens, edit `camera.device_index` on the `/config` page.
@@ -578,7 +578,7 @@ Phase 2 adds **automatic** plate recognition on live video — no button require
 ### Architecture
 
 ```
-frame → YOLO plate detector → crop + preprocess → PaddleOCR → normalize/correct → validate
+frame → YOLO plate detector → crop + preprocess → FastPlateOCR → normalize/correct → validate
                                                                          ↓
                                               MultiFrameVoter aggregates across frames
                                                                          ↓
@@ -596,20 +596,10 @@ pip install -r requirements-alpr.txt
 
 # Or individually:
 pip install ultralytics              # YOLO detector
-pip install paddlepaddle paddleocr   # OCR (CPU)
-pip install easyocr                  # optional cropped-plate OCR fallback
+pip install fast-plate-ocr          # OCR optimized for licence plates
 ```
 
-**Windows note:** If `pip install paddlepaddle` says "No matching distribution found", check your Python version first:
-```powershell
-python --version
-```
-If it says Python 3.14, create a Python 3.11/3.12 virtual environment and install ALPR there. PaddlePaddle wheels commonly lag behind the newest Python releases.
-
-If PaddleOCR initializes but returns no text for good YOLO plate crops, install the optional cropped-plate fallback:
-```powershell
-pip install easyocr
-```
+**Windows note:** Do not install PaddleOCR/PaddlePaddle for this project. The supported OCR backend is FastPlateOCR.
 
 ### Get a plate detector model
 
@@ -663,7 +653,7 @@ python scripts/test_alpr.py --camera --frames 30
 ### Limitations
 
 - **Model quality is the bottleneck.** A fine-tuned plate detector is essential; without one ALPR will miss most plates in real traffic.
-- PaddleOCR can struggle with motion blur and low-light plates — good camera placement helps more than model tweaking.
+- FastPlateOCR still struggles with motion blur, glare, and low-light plates — good camera placement helps more than model tweaking.
 - Whole-frame OCR fallback (no YOLO) produces many false positives and is not suitable for moving vehicles.
 - `live_matcher.py` (background alert on known plates) is still a stub pending real-world tuning.
 
