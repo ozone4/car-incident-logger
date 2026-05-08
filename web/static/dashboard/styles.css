@@ -966,3 +966,101 @@ body {
 /* ── Density ─────────────────────────────────────────────── */
 .density-compact .ctl-grid { gap: 6px; }
 .density-compact .act-card { min-height: 50px; padding: 8px 10px; }
+
+/* ── GPS Widget ──────────────────────────────────────────── */
+.gps-widget {
+  padding: 8px 10px 6px;
+  min-height: 0;
+}
+.gps-widget .card-head { margin-bottom: 4px; }
+.gps-widget .card-head .eyebrow {
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.gps-widget .card-head svg { width: 12px; height: 12px; }
+
+.gps-main {
+  display: flex; align-items: baseline; gap: 4px;
+  margin: 2px 0 4px;
+}
+.gps-speed {
+  font-size: 32px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--ok);
+  line-height: 1;
+  text-shadow: 0 0 16px rgba(94,179,122,0.35);
+  letter-spacing: -0.02em;
+}
+.gps-speed-unit {
+  font-size: 11px; color: var(--muted); margin-left: 2px;
+}
+
+.gps-meta {
+  display: flex; gap: 8px; flex-wrap: wrap;
+  font-size: 9px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.08em;
+  margin-bottom: 4px;
+}
+
+.gps-trip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 9px; color: var(--info);
+  text-transform: uppercase; letter-spacing: 0.1em;
+  margin-top: 2px;
+}
+.gps-trip svg { width: 10px; height: 10px; }
+
+/* ── TopBar speed chip + AP indicator ───────────────────── */
+.speed-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 8px;
+  background: rgba(94,179,122,0.1);
+  border: 1px solid rgba(94,179,122,0.25);
+  border-radius: 2px;
+  font-size: 11px;
+  color: var(--ok);
+  letter-spacing: 0.04em;
+}
+.speed-chip svg { width: 12px; height: 12px; }
+
+.ap-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.ap-chip svg { width: 12px; height: 12px; }
+.ap-chip.is-ap {
+  color: var(--info);
+  border-color: rgba(106,166,200,0.35);
+  background: rgba(106,166,200,0.08);
+}
+
+/* ── Live-side grid — make room for GPS widget ───────────── */
+.live-side {
+  grid-template-rows: auto auto 1fr auto auto;
+}
+
+/* ── iPad touch target helpers ───────────────────────────── */
+/* Ensure all interactive elements are at least 44×44px */
+.seg-btn {
+  min-height: 44px;
+  padding: 6px 18px;
+}
+.icon-btn {
+  min-width: 44px;
+  min-height: 44px;
+}
+.ctl-pill {
+  min-height: 44px;
+  padding: 8px 14px;
+}
+.act-card {
+  min-height: 56px;
+}
+

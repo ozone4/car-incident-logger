@@ -2,8 +2,20 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=1024, initial-scale=1"/>
+<!-- iPad landscape kiosk: fixed 1024-wide viewport, no user scaling -->
+<meta name="viewport" content="width=1024, initial-scale=1, maximum-scale=1, user-scalable=no"/>
 <title>dashlog — in‑car dashboard</title>
+
+<!-- PWA / home-screen support -->
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="DashLog"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="theme-color" content="#0b0d0f"/>
+<link rel="manifest" href="/static/manifest.json"/>
+<!-- Apple touch icon placeholder — replace with a real 180×180 icon if desired -->
+<link rel="apple-touch-icon" href="/static/dashboard/icon-180.png"/>
+
 <link rel="stylesheet" href="{{ url_for('static', filename='dashboard/styles.css') }}"/>
 </head>
 <body>

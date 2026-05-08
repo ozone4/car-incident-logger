@@ -1,6 +1,6 @@
 # Linux Appliance Mode
 
-This mode turns the dashcam laptop into a boot-and-record appliance for a Linux ThinkPad-style install.
+This mode turns the dashcam laptop into a boot-and-record appliance for a Linux ThinkPad-style install. An iPad is the touch dashboard, connected directly via the Lenovo's own Wi-Fi access point.
 
 Target behaviour:
 
@@ -34,10 +34,125 @@ The installer:
 - Installs a `systemd-sleep` resume hook
 - Starts both services
 
-Dashboard:
+---
+
+## Wi-Fi Access Point (iPad Connection)
+
+The Lenovo creates its own Wi-Fi network so the iPad connects directly without internet.
+
+### Setup
+
+1. Edit `config.yaml` and set `wifi_ap.enabled: true`. Adjust `interface`, `ssid`, and `password` as needed:
+
+```yaml
+wifi_ap:
+  enabled: true
+  interface: wlan0           # check with: ip link show
+  ssid: CarLogger
+  country_code: CA
+  static_ip: 192.168.77.1
+  dhcp_range_start: 192.168.77.10
+  dhcp_range_end: 192.168.77.50
+  password: ""               # empty = open network
+```
+
+2. Run the setup script:
+
+```bash
+sudo bash scripts/linux/setup_wifi_ap.sh
+```
+
+This installs `hostapd` + `dnsmasq`, writes configs to `/etc/car-logger/`, and enables `car-logger-ap.service`.
+
+3. On the iPad, join the `CarLogger` Wi-Fi network and open Safari to:
+
+```
+http://192.168.77.1:5000/dashboard
+```
+
+Add to home screen for full-screen kiosk mode (Settings → Add to Home Screen in Safari).
+
+### AP Troubleshooting
+
+```bash
+# Check AP status
+systemctl status car-logger-ap
+journalctl -u car-logger-ap -f
+
+# Check DHCP leases (iPad should appear here)
+cat /var/lib/dnsmasq/car-logger-ap.leases
+
+# Check interface
+ip addr show wlan0
+```
+
+If the AP fails after suspend/resume, restart it:
+
+```bash
+sudo systemctl restart car-logger-ap
+```
+
+The resume hook (`deploy/linux/systemd-sleep/car-incident-logger-resume`) restarts both `car-logger-ap` and `car-incident-logger` on resume automatically.
+
+---
+
+## GPS
+
+Connect a USB GPS dongle. Common models appear as `/dev/ttyUSB0`.
+
+Edit `config.yaml`:
+
+```yaml
+gps:
+  enabled: true
+  backend: auto              # tries gpsd first, falls back to serial
+  serial_port: /dev/ttyUSB0
+  baud_rate: 9600
+  poll_interval_seconds: 1.0
+  stale_after_seconds: 10.0
+```
+
+If you have gpsd running:
+
+```bash
+sudo apt-get install gpsd gpsd-clients
+sudo gpsd /dev/ttyUSB0 -F /var/run/gpsd.sock
+# test
+cgps -s
+```
+
+For direct serial (no gpsd), install dependencies:
+
+```bash
+.venv/bin/pip install pyserial pynmea2
+```
+
+GPS status is visible in the dashboard at `http://192.168.77.1:5000/gps/status` and as the live speed widget in the top bar.
+
+### Trip Tracking
+
+While the logger is running with a GPS fix, breadcrumbs are sampled every 5 seconds:
+
+```yaml
+trip_tracker:
+  enabled: true
+  sample_interval_seconds: 5.0
+```
+
+Trip data is stored in the `trips` and `trip_points` tables in `data/plates.db`. The `/trip/current` API returns live trip status.
+
+---
+
+## Dashboard
 
 ```text
 http://<laptop-ip>:5000/
+```
+
+When connected via the Lenovo AP:
+
+```text
+http://192.168.77.1:5000/dashboard
 ```
 
 Camera default:
@@ -68,10 +183,17 @@ sudo systemctl status car-incident-power-watch
 journalctl -u car-incident-power-watch -f
 ```
 
-Restart both:
+Wi-Fi AP:
 
 ```bash
-sudo systemctl restart car-incident-logger car-incident-power-watch
+sudo systemctl status car-logger-ap
+journalctl -u car-logger-ap -f
+```
+
+Restart all:
+
+```bash
+sudo systemctl restart car-logger-ap car-incident-logger car-incident-power-watch
 ```
 
 ---
@@ -124,19 +246,24 @@ sudo systemctl suspend
 After resume, check:
 
 ```bash
-systemctl status car-incident-logger car-incident-power-watch
+systemctl status car-incident-logger car-logger-ap car-incident-power-watch
 curl http://127.0.0.1:5000/health
-curl http://127.0.0.1:5000/system/power
+curl http://127.0.0.1:5000/gps/status
+curl http://127.0.0.1:5000/trip/current
 curl http://127.0.0.1:5000/appliance/status
 ```
 
-The dashboard also shows a **Linux appliance** card with AC/battery state, suspend grace countdown, camera/recording state, and last resume time.
+The dashboard shows a **Linux appliance** card with AC/battery state, suspend grace countdown, camera/recording state, and last resume time.
 
 If the laptop does **not** wake automatically when AC returns, the app will still resume cleanly once the laptop is woken by lid/power button. Later options include RTC wake polling or BIOS-specific AC wake tuning.
 
 ---
 
 ## How it works
+
+### `car-logger-ap.service`
+
+Runs `hostapd` (AP) and `dnsmasq` (DHCP) on the configured Wi-Fi interface. Brings up the static IP before hostapd starts. Installed by `scripts/linux/setup_wifi_ap.sh`.
 
 ### `car-incident-logger.service`
 
@@ -146,7 +273,7 @@ Runs:
 .venv/bin/python web/app.py --host 0.0.0.0 --port 5000
 ```
 
-The web app already auto-starts camera, dashcam buffer, loop recording, storage cleanup, and ALPR if configured.
+The web app auto-starts camera, dashcam buffer, loop recording, storage cleanup, GPS reader, trip tracker, and ALPR if configured.
 
 ### `car-incident-power-watch.service`
 
@@ -156,13 +283,7 @@ Runs:
 .venv/bin/python scripts/linux/dashcam-power-watch.py --config config.yaml
 ```
 
-It reads Linux power state from:
-
-```text
-/sys/class/power_supply
-```
-
-When suspend is required it calls:
+It reads Linux power state from `/sys/class/power_supply`. When suspend is required it calls:
 
 1. `POST /camera/stop`
 2. `sync`
@@ -179,8 +300,9 @@ Installed at:
 On resume, it restarts:
 
 ```bash
+car-logger-ap.service
 car-incident-logger.service
 car-incident-power-watch.service
 ```
 
-That restart is intentional: USB cameras and OpenCV/V4L2 handles are often the flaky part after suspend, so a clean service restart is more reliable than trying to keep stale handles alive.
+That restart is intentional: USB cameras, OpenCV/V4L2 handles, and Wi-Fi AP interfaces are often the flaky part after suspend, so a clean service restart is more reliable than trying to keep stale handles alive.

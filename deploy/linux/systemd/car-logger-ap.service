@@ -1,0 +1,25 @@
+[Unit]
+Description=Car Logger Wi-Fi Access Point (hostapd + dnsmasq)
+After=network.target
+Before=car-incident-logger.service
+# Weak ordering — logger still starts if AP fails
+Wants=car-incident-logger.service
+
+[Service]
+Type=forking
+# hostapd runs in background mode (-B)
+ExecStartPre=/usr/sbin/ip addr add __STATIC_IP__/24 dev __INTERFACE__ || true
+ExecStart=/usr/sbin/hostapd -B /etc/car-logger/hostapd.conf -P /run/hostapd-car-logger.pid
+ExecStartPost=/usr/sbin/dnsmasq --conf-file=/etc/car-logger/dnsmasq.conf --pid-file=/run/dnsmasq-car-logger.pid
+ExecStopPost=/usr/sbin/ip addr del __STATIC_IP__/24 dev __INTERFACE__ || true
+ExecStopPost=/bin/kill $(cat /run/dnsmasq-car-logger.pid 2>/dev/null) 2>/dev/null || true
+PIDFile=/run/hostapd-car-logger.pid
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=15
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

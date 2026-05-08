@@ -106,10 +106,28 @@ notifier:
   console_alerts: true
 
 gps:
-  enabled: false        # set true when GPS hardware is connected
-  host: localhost       # gpsd host
-  port: 2947            # gpsd port
-  use_gpsd: true        # prefer gpsd over direct serial
+  enabled: false              # set true when GPS hardware is connected
+  backend: gpsd              # gpsd | serial | auto (auto tries gpsd then serial)
+  host: localhost             # gpsd host
+  port: 2947                  # gpsd port
+  serial_port: /dev/ttyUSB0  # serial device for direct NMEA fallback
+  baud_rate: 9600             # serial baud rate (common GPS dongles: 4800 or 9600)
+  poll_interval_seconds: 1.0  # how often to poll GPS
+  stale_after_seconds: 10.0   # mark GPS state stale after this many seconds without update
+
+trip_tracker:
+  enabled: true               # sample GPS into trips/breadcrumbs when logger is active
+  sample_interval_seconds: 5.0  # how often to record a breadcrumb when GPS is valid
+
+wifi_ap:
+  enabled: false              # set true to configure Lenovo as an iPad-facing Wi-Fi AP
+  interface: wlan0            # Wi-Fi interface (wlan0, wlp2s0, or USB wlan1)
+  ssid: CarLogger             # AP SSID (network name)
+  country_code: CA            # ISO 3166-1 alpha-2 country code
+  static_ip: 192.168.77.1    # Lenovo AP IP (also the dashboard URL host)
+  dhcp_range_start: 192.168.77.10
+  dhcp_range_end: 192.168.77.50
+  password: ""                # WPA2 passphrase; empty = open network (not recommended)
 
 logging:
   level: INFO              # DEBUG, INFO, WARNING, ERROR

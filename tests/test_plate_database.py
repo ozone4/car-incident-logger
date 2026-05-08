@@ -141,6 +141,122 @@ class TestSightings:
         assert abs(rows[0]["confidence"] - 0.77) < 0.001
 
 
+# ── Extended GPS sighting fields ──────────────────────────────────────────────
+
+class TestSightingGPSFields:
+
+    def test_add_sighting_with_full_gps(self, db):
+        sid = db.add_sighting(
+            "XYZ123",
+            confidence=0.9,
+            latitude=49.28,
+            longitude=-123.12,
+            speed_kmh=72.5,
+            heading=90.0,
+            altitude=15.0,
+            gps_timestamp="2026-01-01T00:00:00+00:00",
+            gps_backend="gpsd",
+        )
+        assert isinstance(sid, int)
+        rows = db.get_sightings_for_plate("XYZ123")
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["speed_kmh"] == pytest.approx(72.5)
+        assert row["heading"] == pytest.approx(90.0)
+        assert row["altitude"] == pytest.approx(15.0)
+        assert row["gps_timestamp"] == "2026-01-01T00:00:00+00:00"
+        assert row["gps_backend"] == "gpsd"
+
+    def test_add_sighting_without_gps_defaults_none(self, db):
+        db.add_sighting("ZZZ000", confidence=0.5)
+        rows = db.get_sightings_for_plate("ZZZ000")
+        assert rows[0]["speed_kmh"] is None
+        assert rows[0]["heading"] is None
+        assert rows[0]["altitude"] is None
+        assert rows[0]["gps_timestamp"] is None
+        assert rows[0]["gps_backend"] is None
+
+
+# ── Trips / trip_points tables ────────────────────────────────────────────────
+
+class TestTrips:
+
+    def test_start_trip_returns_id(self, db):
+        tid = db.start_trip()
+        assert isinstance(tid, int)
+        assert tid > 0
+
+    def test_get_trip_returns_row(self, db):
+        tid = db.start_trip()
+        row = db.get_trip(tid)
+        assert row is not None
+        assert row["id"] == tid
+        assert row["started_at"] is not None
+        assert row["ended_at"] is None
+
+    def test_end_trip_sets_ended_at(self, db):
+        tid = db.start_trip()
+        db.end_trip(tid)
+        row = db.get_trip(tid)
+        assert row["ended_at"] is not None
+
+    def test_get_trip_nonexistent_returns_none(self, db):
+        assert db.get_trip(9999) is None
+
+    def test_add_trip_point_returns_id(self, db):
+        tid = db.start_trip()
+        pid = db.add_trip_point(trip_id=tid, lat=49.28, lon=-123.12, speed_kmh=60.0)
+        assert isinstance(pid, int)
+
+    def test_get_trip_points(self, db):
+        tid = db.start_trip()
+        db.add_trip_point(tid, 49.28, -123.12, speed_kmh=60.0, heading=90.0, altitude=10.0, fix_quality=3)
+        db.add_trip_point(tid, 49.29, -123.11, speed_kmh=65.0)
+        points = db.get_trip_points(tid)
+        assert len(points) == 2
+        assert points[0]["lat"] == pytest.approx(49.29)  # newest first
+
+    def test_get_trip_points_empty_for_new_trip(self, db):
+        tid = db.start_trip()
+        assert db.get_trip_points(tid) == []
+
+    def test_get_recent_trips(self, db):
+        t1 = db.start_trip()
+        t2 = db.start_trip()
+        trips = db.get_recent_trips(limit=5)
+        trip_ids = [t["id"] for t in trips]
+        assert t1 in trip_ids
+        assert t2 in trip_ids
+
+    def test_trip_points_have_required_fields(self, db):
+        tid = db.start_trip()
+        db.add_trip_point(tid, 49.28, -123.12, speed_kmh=50.0, heading=45.0, altitude=5.0, fix_quality=3)
+        points = db.get_trip_points(tid)
+        p = points[0]
+        for field in ("trip_id", "timestamp", "lat", "lon", "speed_kmh", "heading", "altitude", "fix_quality"):
+            assert field in p
+
+
+# ── Schema migration idempotency ──────────────────────────────────────────────
+
+class TestMigrationIdempotency:
+
+    def test_reinitializing_schema_on_existing_db_is_safe(self, tmp_path):
+        db_path = tmp_path / "migrate_test.db"
+        db1 = PlateDatabase(db_path=str(db_path))
+        db1.add_incident("WJ1843", {"timestamp": "2024-01-01T00:00:00Z"})
+        db1.add_sighting("WJ1843", confidence=0.9)
+        db1.close()
+
+        # Re-open (re-runs _init_schema with additive migrations)
+        db2 = PlateDatabase(db_path=str(db_path))
+        plate = db2.get_plate("WJ1843")
+        assert plate is not None
+        rows = db2.get_sightings_for_plate("WJ1843")
+        assert len(rows) == 1
+        db2.close()
+
+
 # ── delete_plate ──────────────────────────────────────────────────────────────
 
 class TestDeletePlate:

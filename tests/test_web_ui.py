@@ -256,3 +256,95 @@ def test_storage_cleanup_dry_run(client):
     data = resp.get_json()
     assert data["dry_run"] is True
     assert "deleted_count" in data
+
+
+# ── GPS status route ─────────────────────────────────────────────────────────
+
+def test_gps_status_returns_json(client):
+    resp = client.get("/gps/status")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert isinstance(data, dict)
+    assert "enabled" in data
+    assert "available" in data
+
+
+def test_gps_status_available_false_when_no_reader(client):
+    from web.app import app as flask_app
+    import web.app as _app
+    # Ensure _gps_reader is None for this test
+    original = _app._gps_reader
+    _app._gps_reader = None
+    try:
+        resp = client.get("/gps/status")
+        data = resp.get_json()
+        assert data["available"] is False
+    finally:
+        _app._gps_reader = original
+
+
+def test_gps_status_with_mock_reader(client):
+    from unittest.mock import MagicMock
+    import web.app as _app
+    original = _app._gps_reader
+    mock_gps = MagicMock()
+    mock_gps.is_available = True
+    mock_gps.get_state.return_value = {
+        "lat": 49.28, "lon": -123.12, "speed_kmh": 60.0,
+        "heading": 90.0, "altitude": 10.0, "fix_quality": 3,
+        "satellites": 8, "stale": False, "error": None,
+        "backend_used": "gpsd", "timestamp": "2026-01-01T00:00:00+00:00",
+    }
+    _app._gps_reader = mock_gps
+    try:
+        resp = client.get("/gps/status")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["available"] is True
+        assert data["state"]["speed_kmh"] == pytest.approx(60.0)
+    finally:
+        _app._gps_reader = original
+
+
+# ── Trip current route ────────────────────────────────────────────────────────
+
+def test_trip_current_returns_json(client):
+    resp = client.get("/trip/current")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert isinstance(data, dict)
+    assert "running" in data
+
+
+def test_trip_current_not_running_when_no_tracker(client):
+    import web.app as _app
+    original = _app._trip_tracker
+    _app._trip_tracker = None
+    try:
+        resp = client.get("/trip/current")
+        data = resp.get_json()
+        assert data["running"] is False
+        assert data["trip"] is None
+    finally:
+        _app._trip_tracker = original
+
+
+def test_trip_current_with_mock_tracker(client):
+    from unittest.mock import MagicMock
+    import web.app as _app
+    original = _app._trip_tracker
+    mock_tracker = MagicMock()
+    mock_tracker.get_current_trip.return_value = {
+        "trip_id": 1, "started_at": "2026-01-01T00:00:00+00:00",
+        "elapsed_seconds": 120, "point_count": 24, "current_gps": None,
+    }
+    _app._trip_tracker = mock_tracker
+    try:
+        resp = client.get("/trip/current")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["running"] is True
+        assert data["trip"]["trip_id"] == 1
+        assert data["trip"]["elapsed_seconds"] == 120
+    finally:
+        _app._trip_tracker = original

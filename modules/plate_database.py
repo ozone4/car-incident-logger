@@ -77,20 +77,50 @@ class PlateDatabase:
                 matched       INTEGER NOT NULL DEFAULT 0
             );
 
-            CREATE INDEX IF NOT EXISTS idx_plates_plate     ON plates(plate);
-            CREATE INDEX IF NOT EXISTS idx_incidents_plate  ON incidents(plate_id);
-            CREATE INDEX IF NOT EXISTS idx_sightings_plate  ON sightings(plate);
+            CREATE TABLE IF NOT EXISTS trips (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at TEXT    NOT NULL,
+                ended_at   TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS trip_points (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                trip_id     INTEGER NOT NULL REFERENCES trips(id),
+                timestamp   TEXT    NOT NULL,
+                lat         REAL    NOT NULL,
+                lon         REAL    NOT NULL,
+                speed_kmh   REAL,
+                heading     REAL,
+                altitude    REAL,
+                fix_quality INTEGER
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_plates_plate      ON plates(plate);
+            CREATE INDEX IF NOT EXISTS idx_incidents_plate   ON incidents(plate_id);
+            CREATE INDEX IF NOT EXISTS idx_sightings_plate   ON sightings(plate);
+            CREATE INDEX IF NOT EXISTS idx_trip_points_trip  ON trip_points(trip_id);
         """)
         conn.commit()
 
-        # Migrate: add GPS columns if they don't exist yet (safe on existing DBs)
-        for col, typedef in [("latitude", "REAL"), ("longitude", "REAL")]:
+        # Additive migrations — safe to run on existing databases
+        _migrations = [
+            # sightings: original GPS columns
+            ("sightings", "latitude",     "REAL"),
+            ("sightings", "longitude",    "REAL"),
+            # sightings: extended GPS context
+            ("sightings", "speed_kmh",    "REAL"),
+            ("sightings", "heading",      "REAL"),
+            ("sightings", "altitude",     "REAL"),
+            ("sightings", "gps_timestamp", "TEXT"),
+            ("sightings", "gps_backend",  "TEXT"),
+        ]
+        for table, col, typedef in _migrations:
             try:
-                conn.execute(f"ALTER TABLE sightings ADD COLUMN {col} {typedef}")
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}")
                 conn.commit()
-                logger.info("DB migration: added sightings.%s", col)
+                logger.info("DB migration: added %s.%s", table, col)
             except Exception:
-                pass  # column already exists
+                pass  # column already exists — that's fine
 
         logger.debug("Database schema ready at %s", self.db_path)
 
@@ -182,14 +212,22 @@ class PlateDatabase:
         snapshot_path: Optional[str] = None,
         latitude: Optional[float] = None,
         longitude: Optional[float] = None,
+        speed_kmh: Optional[float] = None,
+        heading: Optional[float] = None,
+        altitude: Optional[float] = None,
+        gps_timestamp: Optional[str] = None,
+        gps_backend: Optional[str] = None,
     ) -> int:
         plate = plate.upper().strip()
         matched = 1 if self.is_known_plate(plate) else 0
         conn = self._conn()
         cur = conn.execute(
-            "INSERT INTO sightings (plate, timestamp, confidence, snapshot_path, matched, latitude, longitude) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (plate, _utcnow(), confidence, snapshot_path, matched, latitude, longitude),
+            "INSERT INTO sightings "
+            "(plate, timestamp, confidence, snapshot_path, matched, "
+            " latitude, longitude, speed_kmh, heading, altitude, gps_timestamp, gps_backend) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (plate, _utcnow(), confidence, snapshot_path, matched,
+             latitude, longitude, speed_kmh, heading, altitude, gps_timestamp, gps_backend),
         )
         conn.commit()
         return cur.lastrowid  # type: ignore[return-value]
@@ -265,6 +303,68 @@ class PlateDatabase:
     def all_plates(self) -> List[Dict[str, Any]]:
         rows = self._conn().execute(
             "SELECT * FROM plates ORDER BY last_seen DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── Trips ─────────────────────────────────────────────────────────────────
+
+    def start_trip(self) -> int:
+        """Open a new trip row and return its id."""
+        conn = self._conn()
+        cur = conn.execute(
+            "INSERT INTO trips (started_at) VALUES (?)", (_utcnow(),)
+        )
+        conn.commit()
+        logger.info("Trip started: id=%d", cur.lastrowid)
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def end_trip(self, trip_id: int) -> None:
+        """Set ended_at on a trip row."""
+        conn = self._conn()
+        conn.execute(
+            "UPDATE trips SET ended_at = ? WHERE id = ?", (_utcnow(), trip_id)
+        )
+        conn.commit()
+
+    def add_trip_point(
+        self,
+        trip_id: int,
+        lat: float,
+        lon: float,
+        speed_kmh: Optional[float] = None,
+        heading: Optional[float] = None,
+        altitude: Optional[float] = None,
+        fix_quality: Optional[int] = None,
+    ) -> int:
+        conn = self._conn()
+        cur = conn.execute(
+            "INSERT INTO trip_points "
+            "(trip_id, timestamp, lat, lon, speed_kmh, heading, altitude, fix_quality) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (trip_id, _utcnow(), lat, lon, speed_kmh, heading, altitude, fix_quality),
+        )
+        conn.commit()
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def get_trip(self, trip_id: int) -> Optional[Dict[str, Any]]:
+        row = self._conn().execute(
+            "SELECT * FROM trips WHERE id = ?", (trip_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_trip_points(self, trip_id: int, limit: int = 500) -> List[Dict[str, Any]]:
+        rows = self._conn().execute(
+            "SELECT * FROM trip_points WHERE trip_id = ? ORDER BY timestamp DESC LIMIT ?",
+            (trip_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_recent_trips(self, limit: int = 10) -> List[Dict[str, Any]]:
+        rows = self._conn().execute(
+            "SELECT t.*, "
+            "(SELECT COUNT(*) FROM trip_points tp WHERE tp.trip_id = t.id) AS point_count "
+            "FROM trips t ORDER BY t.started_at DESC LIMIT ?",
+            (limit,),
         ).fetchall()
         return [dict(r) for r in rows]
 

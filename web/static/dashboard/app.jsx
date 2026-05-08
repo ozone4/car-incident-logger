@@ -89,6 +89,38 @@ function useApplianceStatus() {
   return data;
 }
 
+function useGPSStatus() {
+  const [data, setData] = useState({ enabled: false, available: false, state: null });
+  useEffect(() => {
+    const tick = async () => {
+      try {
+        const r = await fetch("/gps/status");
+        if (r.ok) setData(await r.json());
+      } catch {}
+    };
+    tick();
+    const id = setInterval(tick, 2000);
+    return () => clearInterval(id);
+  }, []);
+  return data;
+}
+
+function useTripStatus() {
+  const [data, setData] = useState({ running: false, trip: null });
+  useEffect(() => {
+    const tick = async () => {
+      try {
+        const r = await fetch("/trip/current");
+        if (r.ok) setData(await r.json());
+      } catch {}
+    };
+    tick();
+    const id = setInterval(tick, 3000);
+    return () => clearInterval(id);
+  }, []);
+  return data;
+}
+
 function useIncidents() {
   const [data, setData] = useState(SEED_INCIDENTS);
   useEffect(() => {
@@ -206,6 +238,9 @@ const Icons = {
   car:       () => <Icon><path d="M5 16V11l2-5h10l2 5v5"/><path d="M3 16h18v3H3z"/><circle cx="7.5" cy="16" r="1.2"/><circle cx="16.5" cy="16" r="1.2"/></Icon>,
   swap:      () => <Icon><path d="M3 8h14l-3-3M21 16H7l3 3"/></Icon>,
   crosshair: () => <Icon><circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></Icon>,
+  gps:       () => <Icon><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="7" strokeDasharray="2 2"/></Icon>,
+  wifi:      () => <Icon><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></Icon>,
+  nav:       () => <Icon><polygon points="3,11 22,2 13,21 11,13"/></Icon>,
 };
 
 /* ────────────────────────────────────────────────────────────
@@ -289,7 +324,15 @@ function CameraViewport({ overlays = true, frozen = false, best = null }) {
    Top status bar
    ──────────────────────────────────────────────────────────── */
 
-function TopBar({ view, setView, recording, muted, setMuted, recStatus }) {
+function useLocalConnection() {
+  // Detect if we're accessing via a local/AP address (not loopback)
+  const host = window.location.hostname;
+  const isAP = host.startsWith("192.168.77.") || host === "carlogger.local";
+  const isLocal = host === "localhost" || host === "127.0.0.1" || isAP;
+  return { isLocal, isAP, host };
+}
+
+function TopBar({ view, setView, recording, muted, setMuted, recStatus, gps }) {
   const [now, setNow] = useState(new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -300,6 +343,10 @@ function TopBar({ view, setView, recording, muted, setMuted, recStatus }) {
   const ss = String(now.getSeconds()).padStart(2, "0");
 
   const segCount = recStatus?.segments_completed || 0;
+  const { isAP, isLocal } = useLocalConnection();
+  const gpsState = gps?.state;
+  const gpsOk = gps?.available && gpsState && !gpsState.stale;
+  const speed = gpsOk && gpsState.speed_kmh != null ? Math.round(gpsState.speed_kmh) : null;
 
   return (
     <header className="topbar">
@@ -322,6 +369,16 @@ function TopBar({ view, setView, recording, muted, setMuted, recStatus }) {
       </div>
 
       <div className="topbar-right">
+        {speed != null && (
+          <span className="speed-chip mono" title="GPS speed">
+            <Icons.nav/> {speed}<span className="muted"> km/h</span>
+          </span>
+        )}
+        {isLocal && (
+          <span className={`ap-chip mono ${isAP ? "is-ap" : ""}`} title={isAP ? "Connected via Wi-Fi AP" : "Local connection"}>
+            <Icons.wifi/> {isAP ? "AP" : "LAN"}
+          </span>
+        )}
         <span className={`rec-chip ${recording ? "is-on" : ""}`}>
           <span className="rec-dot"></span>
           <span className="mono">{recording ? "REC" : "OFF"}</span>
@@ -348,10 +405,17 @@ function TopBar({ view, setView, recording, muted, setMuted, recStatus }) {
    Telemetry strip — live ALPR stats (GPS not in this system)
    ──────────────────────────────────────────────────────────── */
 
-function TelemetryStrip({ alpr }) {
+function TelemetryStrip({ alpr, gps }) {
   const active    = (alpr.sightings || []).filter(s => s.status === "visible").length;
   const bestPlate = alpr.best ? alpr.best.plate : "—";
   const bestConf  = alpr.best ? `${Math.round(((alpr.best.best_confidence ?? alpr.best.confidence) || 0) * 100)}%` : "—";
+  const gpsState  = gps?.state;
+  const speed     = (gpsState && !gpsState.stale && gpsState.speed_kmh != null)
+    ? `${Math.round(gpsState.speed_kmh)} km/h`
+    : "—";
+  const heading   = (gpsState && gpsState.heading != null)
+    ? `${Math.round(gpsState.heading)}°`
+    : "—";
 
   return (
     <div className="telemetry">
@@ -359,9 +423,50 @@ function TelemetryStrip({ alpr }) {
       <Stat label="best plate" value={bestPlate} mono/>
       <Stat label="confidence" value={bestConf} mono/>
       <Stat label="visible"    value={active} unit="plates"/>
-      <Stat label="detections" value={alpr.detections_seen || 0} mono/>
-      <Stat label="frames"     value={alpr.frames_scanned || 0} mono/>
+      <Stat label="speed"      value={speed} mono/>
+      <Stat label="heading"    value={heading} mono/>
     </div>
+  );
+}
+
+/* GPS speed + status widget */
+function GPSWidget({ gps, trip }) {
+  const state = gps?.state;
+  const available = gps?.available && state && !state.stale && !state.error;
+  const speed = available && state.speed_kmh != null ? Math.round(state.speed_kmh) : null;
+  const fix = available ? (state.fix_quality >= 3 ? "3D" : state.fix_quality >= 2 ? "2D" : "no fix") : null;
+  const backend = state?.backend_used || null;
+
+  const elapsed = trip?.trip?.elapsed_seconds;
+  const tripLabel = elapsed != null ? fmtDuration(elapsed) : null;
+
+  return (
+    <section className="card gps-widget">
+      <div className="card-head">
+        <span className="eyebrow"><Icons.gps/> GPS</span>
+        <span className={`pill ${available ? "pill-ok" : ""}`}>
+          {available ? fix || "fix" : gps?.enabled ? "no fix" : "disabled"}
+        </span>
+      </div>
+      <div className="gps-main">
+        <span className="gps-speed fig">{speed != null ? speed : "—"}</span>
+        <span className="gps-speed-unit mono">km/h</span>
+      </div>
+      {available && (
+        <div className="gps-meta mono">
+          {state.heading != null && <span>{Math.round(state.heading)}° hdg</span>}
+          {state.altitude != null && <span>{Math.round(state.altitude)}m alt</span>}
+          {state.satellites != null && <span>{state.satellites} sat</span>}
+          {backend && <span>{backend}</span>}
+        </div>
+      )}
+      {tripLabel && (
+        <div className="gps-trip mono">
+          <Icons.nav/> trip {tripLabel}
+          {trip.trip?.point_count > 0 && <span className="muted"> · {trip.trip.point_count} pts</span>}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -685,7 +790,7 @@ function IncidentButton({ size = "lg", onCapture }) {
    View 1 — LIVE
    ──────────────────────────────────────────────────────────── */
 
-function LiveView({ muted, sightings, incidents, frozen, setFrozen, alpr, health, appliance }) {
+function LiveView({ muted, sightings, incidents, frozen, setFrozen, alpr, health, appliance, gps, trip }) {
   return (
     <div className="live-view">
       <div className="live-stage">
@@ -702,12 +807,13 @@ function LiveView({ muted, sightings, incidents, frozen, setFrozen, alpr, health
             <Icons.swap/> <span>Front cam</span>
           </button>
         </div>
-        <TelemetryStrip alpr={alpr}/>
+        <TelemetryStrip alpr={alpr} gps={gps}/>
       </div>
 
       <div className="live-side">
         <IncidentButton size="md"/>
-        <SightingsPanel rows={sightings.slice(0, 5)} running={alpr.running}/>
+        <GPSWidget gps={gps} trip={trip}/>
+        <SightingsPanel rows={sightings.slice(0, 4)} running={alpr.running}/>
         <AppliancePanel appliance={appliance}/>
         <HealthRail health={health} alpr={alpr}/>
       </div>
@@ -901,6 +1007,8 @@ function App() {
   const recStatus = useRecordingStatus();
   const appliance = useApplianceStatus();
   const incidents = useIncidents();
+  const gps       = useGPSStatus();
+  const trip      = useTripStatus();
 
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const [view,   setView]  = useState(tweaks.view);
@@ -923,6 +1031,7 @@ function App() {
         muted={muted}
         setMuted={(m) => { setMuted(m); setTweak("muted", m); }}
         recStatus={recStatus}
+        gps={gps}
       />
 
       <main className="stage">
@@ -936,6 +1045,8 @@ function App() {
             alpr={alpr}
             health={health}
             appliance={appliance}
+            gps={gps}
+            trip={trip}
           />
         ) : (
           <ControlsView

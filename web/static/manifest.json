@@ -1,0 +1,18 @@
+{
+  "name": "DashLog In-Car Logger",
+  "short_name": "DashLog",
+  "description": "In-car incident logger and ALPR dashcam dashboard",
+  "start_url": "/dashboard",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#0b0d0f",
+  "theme_color": "#0b0d0f",
+  "icons": [
+    {
+      "src": "/static/dashboard/icon-180.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

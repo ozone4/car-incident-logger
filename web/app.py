@@ -45,6 +45,7 @@ from modules.loop_recorder import LoopRecorder  # noqa: E402
 from modules.incident_trigger import WebTrigger  # noqa: E402
 from modules.multi_frame_voter import MultiFrameVoter  # noqa: E402
 from modules.gps_reader import GPSReader  # noqa: E402
+from modules.trip_tracker import TripTracker  # noqa: E402
 from modules.plate_database import PlateDatabase  # noqa: E402
 from modules.rolling_buffer import RollingBuffer  # noqa: E402
 from modules.recording_recovery import recover_recordings  # noqa: E402
@@ -98,6 +99,10 @@ _web_trigger = WebTrigger()
 _storage_manager: Optional[StorageManager] = None
 _health_monitor: Optional[HealthMonitor] = None
 _last_recovery_result: Optional[dict] = None
+
+# ── GPS + trip state ─────────────────────────────────────────────────────────
+_gps_reader: Optional[GPSReader] = None
+_trip_tracker: Optional[TripTracker] = None
 
 
 # ── Config helpers ────────────────────────────────────────────────────────────
@@ -212,6 +217,12 @@ def _save_dashcam_incident_to_db(result: dict) -> None:
     if db is None:
         return
     plate = result.get("plate") or "DASHCAM"
+
+    # Attach nearest GPS snapshot to incident metadata
+    gps_snap: Optional[dict] = None
+    if _gps_reader is not None:
+        gps_snap = _gps_reader.get_state()
+
     metadata = {
         "timestamp": result.get("timestamp", ""),
         "clip_path": result.get("clip_path"),
@@ -221,6 +232,7 @@ def _save_dashcam_incident_to_db(result: dict) -> None:
         "post_roll_frames": result.get("post_roll_frames", 0),
         "total_frames": result.get("total_frames", 0),
         "recent_sightings": result.get("recent_sightings", []),
+        "gps": gps_snap,
     }
     try:
         db.add_incident(plate, metadata)
@@ -469,13 +481,15 @@ def _live_alpr_loop() -> None:
     scan_interval = max(0.0, float(cfg.alpr_scan_interval))
     voter = MultiFrameVoter(min_votes=1)
 
-    # GPS reader — gracefully disabled if hardware/config absent
-    try:
-        raw_cfg = yaml.safe_load(_config_path().read_text()) or {}
-        gps_cfg = raw_cfg.get("gps", {})
-    except Exception:
-        gps_cfg = {}
-    gps = GPSReader(gps_cfg)
+    # Use the module-level GPS reader (started at startup); fall back to local if not initialised
+    gps = _gps_reader
+    if gps is None:
+        try:
+            raw_cfg = yaml.safe_load(_config_path().read_text()) or {}
+            gps_cfg = raw_cfg.get("gps", {})
+        except Exception:
+            gps_cfg = {}
+        gps = GPSReader(gps_cfg)
 
     db = _get_db()
 
@@ -535,7 +549,7 @@ def _live_alpr_loop() -> None:
 
         # I/O outside the lock: save crops + persist sightings to DB
         if needs_snap:
-            loc = gps.get_location()
+            gps_state = gps.get_state() if gps else None
             for plate_key, (bbox, best_conf) in needs_snap.items():
                 snap_path = _save_plate_crop(frame, bbox, plate_key)
                 if snap_path:
@@ -549,8 +563,13 @@ def _live_alpr_loop() -> None:
                             plate=plate_key,
                             confidence=best_conf,
                             snapshot_path=snap_path,
-                            latitude=loc["lat"] if loc else None,
-                            longitude=loc["lon"] if loc else None,
+                            latitude=gps_state.get("lat") if gps_state else None,
+                            longitude=gps_state.get("lon") if gps_state else None,
+                            speed_kmh=gps_state.get("speed_kmh") if gps_state else None,
+                            heading=gps_state.get("heading") if gps_state else None,
+                            altitude=gps_state.get("altitude") if gps_state else None,
+                            gps_timestamp=gps_state.get("timestamp") if gps_state else None,
+                            gps_backend=gps_state.get("backend_used") if gps_state else None,
                         )
                     except Exception as exc:
                         logger.debug("Could not persist sighting for %s: %s", plate_key, exc)
@@ -1177,6 +1196,35 @@ def appliance_status_api():
     })
 
 
+@app.route("/gps/status")
+def gps_status_api():
+    """Return current GPS state (normalized dict) or a disabled/no-fix response."""
+    if _gps_reader is None:
+        # GPS not started — read config to report whether it is even enabled
+        try:
+            raw_cfg = yaml.safe_load(_config_path().read_text()) or {}
+            enabled = bool(raw_cfg.get("gps", {}).get("enabled", False))
+        except Exception:
+            enabled = False
+        return jsonify({"enabled": enabled, "available": False, "state": None})
+
+    state = _gps_reader.get_state()
+    return jsonify({
+        "enabled": True,
+        "available": _gps_reader.is_available,
+        "state": state,
+    })
+
+
+@app.route("/trip/current")
+def trip_current_api():
+    """Return current trip summary from TripTracker, or not-running response."""
+    if _trip_tracker is None:
+        return jsonify({"running": False, "trip": None})
+    trip = _trip_tracker.get_current_trip()
+    return jsonify({"running": trip is not None, "trip": trip})
+
+
 @app.route("/storage/cleanup", methods=["POST"])
 def storage_cleanup_api():
     """Trigger a manual storage cleanup pass."""
@@ -1514,6 +1562,35 @@ app.jinja_env.globals["fmt_ts"] = _format_timestamp
 
 # ── Startup helpers ──────────────────────────────────────────────────────────
 
+def _start_gps_and_trip() -> None:
+    """Start GPS reader and trip tracker from config. Failures are non-fatal."""
+    global _gps_reader, _trip_tracker
+    try:
+        raw_cfg = yaml.safe_load(_config_path().read_text()) or {}
+        gps_cfg = raw_cfg.get("gps", {})
+        trip_cfg = raw_cfg.get("trip_tracker", {})
+    except Exception as exc:
+        logger.warning("GPS/trip config unavailable: %s", exc)
+        return
+
+    try:
+        _gps_reader = GPSReader(gps_cfg)
+        _gps_reader.start()
+    except Exception as exc:
+        logger.warning("GPS reader failed to start: %s", exc)
+        _gps_reader = None
+
+    if _gps_reader is not None and bool(trip_cfg.get("enabled", True)):
+        db = _get_db()
+        if db is not None:
+            try:
+                _trip_tracker = TripTracker(db=db, gps_reader=_gps_reader, config=trip_cfg)
+                _trip_tracker.start()
+            except Exception as exc:
+                logger.warning("Trip tracker failed to start: %s", exc)
+                _trip_tracker = None
+
+
 def _auto_start_dashcam_services() -> None:
     """Start dashcam services for normal in-car operation.
 
@@ -1539,6 +1616,9 @@ def _auto_start_dashcam_services() -> None:
 
     # Always start storage manager (cleanup runs regardless of camera state)
     _start_storage_manager()
+
+    # Start GPS reader + trip tracker (non-fatal if hardware absent)
+    _start_gps_and_trip()
 
     if cfg.dashcam_auto_start_camera:
         result = _start_camera()
