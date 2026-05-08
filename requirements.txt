@@ -16,6 +16,10 @@ numpy>=1.24.0
 # Configuration
 pyyaml>=6.0
 
+# GPS dongle support (direct NMEA serial fallback when gpsd is unavailable)
+pyserial>=3.5
+pynmea2>=1.19.0
+
 # Keyboard button listener
 pynput>=1.7.6
 
