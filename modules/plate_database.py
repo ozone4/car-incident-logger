@@ -228,6 +228,65 @@ class PlateDatabase:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_incident(self, incident_id: int) -> Optional[Dict[str, Any]]:
+        """Return a single incident row joined with its plate, or None."""
+        row = self._conn().execute(
+            "SELECT i.*, p.plate FROM incidents i JOIN plates p ON p.id = i.plate_id "
+            "WHERE i.id = ?",
+            (incident_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    @_retry_on_busy
+    def update_incident_metadata(self, incident_id: int, updates: Dict[str, Any]) -> bool:
+        """Merge `updates` into the incident's metadata_json. Returns True if updated.
+
+        Whitelisted top-level keys only — everything else is preserved as-is.
+        """
+        allowed = {"parsed_note", "tags", "user_notes"}
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT metadata_json FROM incidents WHERE id = ?", (incident_id,)
+        ).fetchone()
+        if not row:
+            return False
+        try:
+            meta = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+        except (json.JSONDecodeError, TypeError):
+            meta = {}
+        for key, value in updates.items():
+            if key in allowed:
+                meta[key] = value
+        conn.execute(
+            "UPDATE incidents SET metadata_json = ? WHERE id = ?",
+            (json.dumps(meta), incident_id),
+        )
+        conn.commit()
+        logger.info("Incident %d updated: keys=%s", incident_id, sorted(updates.keys()))
+        return True
+
+    @_retry_on_busy
+    def delete_incident(self, incident_id: int) -> bool:
+        """Delete an incident row. Decrements its plate's incident_count.
+
+        Files on disk are NOT touched here — the route handler owns filesystem cleanup.
+        """
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT plate_id FROM incidents WHERE id = ?", (incident_id,)
+        ).fetchone()
+        if not row:
+            return False
+        plate_id = row["plate_id"]
+        conn.execute("DELETE FROM incidents WHERE id = ?", (incident_id,))
+        conn.execute(
+            "UPDATE plates SET incident_count = MAX(incident_count - 1, 0) WHERE id = ?",
+            (plate_id,),
+        )
+        conn.commit()
+        logger.info("Incident %d deleted (plate_id=%d)", incident_id, plate_id)
+        return True
+
     # ── Sightings (Phase 2 ALPR) ──────────────────────────────────────────────
 
     @_retry_on_busy

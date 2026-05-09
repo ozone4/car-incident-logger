@@ -15,9 +15,12 @@ import atexit
 import contextlib
 import json
 import logging
+import shutil
 import sys
 import threading
 import time
+import zipfile
+from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
@@ -509,6 +512,119 @@ def incidents_json():
     incidents = db.get_all_incidents(limit=limit) if db else []
     _decode_metadata(incidents)
     return jsonify(incidents=incidents)
+
+
+def _incident_folder(incident: dict) -> Optional[Path]:
+    """Resolve an incident's on-disk folder, sandboxed under storage_base_path."""
+    meta = incident.get("meta") or {}
+    if not meta:
+        try:
+            meta = json.loads(incident.get("metadata_json") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            meta = {}
+    clip = meta.get("clip_path") or incident.get("clip_path")
+    if not clip:
+        return None
+    try:
+        cfg = _load_config()
+        allowed_root = Path(cfg.storage_base_path).resolve()
+    except Exception:
+        allowed_root = (PROJECT_ROOT / "data").resolve()
+    folder = Path(clip).resolve().parent
+    try:
+        folder.relative_to(allowed_root)
+    except ValueError:
+        return None
+    return folder
+
+
+@app.route("/incidents/<int:incident_id>/edit", methods=["POST"])
+def incident_edit(incident_id):
+    """Update an incident's note / tags. POST body: {parsed_note?, tags?}."""
+    auth = _check_admin_token()
+    if auth is not None:
+        return auth
+    db = _get_db()
+    if db is None:
+        return jsonify({"ok": False, "error": "DB unavailable"}), 503
+
+    body = request.get_json(silent=True) or {}
+    updates: dict = {}
+    if "parsed_note" in body:
+        updates["parsed_note"] = str(body["parsed_note"])[:500]
+    if "user_notes" in body:
+        updates["user_notes"] = str(body["user_notes"])[:2000]
+    if "tags" in body:
+        tags = body["tags"]
+        if not isinstance(tags, list):
+            return jsonify({"ok": False, "error": "tags must be an array"}), 400
+        # Normalize: strip, drop empties, cap length per tag and total count
+        clean = [str(t).strip()[:32] for t in tags if str(t).strip()]
+        # De-dupe preserving order
+        seen = set()
+        updates["tags"] = [t for t in clean if not (t in seen or seen.add(t))][:20]
+
+    if not updates:
+        return jsonify({"ok": False, "error": "No editable fields in body"}), 400
+    if not db.update_incident_metadata(incident_id, updates):
+        return jsonify({"ok": False, "error": "Incident not found"}), 404
+    return jsonify({"ok": True, "id": incident_id, "updates": updates})
+
+
+@app.route("/incidents/<int:incident_id>/delete", methods=["POST"])
+def incident_delete(incident_id):
+    """Delete an incident's row + on-disk folder."""
+    auth = _check_admin_token()
+    if auth is not None:
+        return auth
+    db = _get_db()
+    if db is None:
+        return jsonify({"ok": False, "error": "DB unavailable"}), 503
+    incident = db.get_incident(incident_id)
+    if incident is None:
+        return jsonify({"ok": False, "error": "Incident not found"}), 404
+
+    folder = _incident_folder(incident)
+    folder_removed = False
+    if folder is not None and folder.exists():
+        try:
+            shutil.rmtree(folder)
+            folder_removed = True
+        except OSError as exc:
+            logger.warning("Could not remove incident folder %s: %s", folder, exc)
+            return jsonify({
+                "ok": False,
+                "error": f"Filesystem cleanup failed: {exc}. DB row preserved.",
+            }), 500
+
+    db.delete_incident(incident_id)
+    return jsonify({"ok": True, "id": incident_id, "folder_removed": folder_removed})
+
+
+@app.route("/incidents/<int:incident_id>/export")
+def incident_export(incident_id):
+    """Stream a ZIP of the full incident folder (clip + audio + transcript + metadata)."""
+    db = _get_db()
+    if db is None:
+        return "DB unavailable", 503
+    incident = db.get_incident(incident_id)
+    if incident is None:
+        return "Incident not found", 404
+
+    folder = _incident_folder(incident)
+    if folder is None or not folder.exists():
+        return "Incident folder missing on disk", 404
+
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(folder.rglob("*")):
+            if path.is_file():
+                arcname = path.relative_to(folder.parent)
+                zf.write(path, arcname=str(arcname))
+    buf.seek(0)
+    plate = incident.get("plate", "incident")
+    fname = f"{plate}_{incident_id}.zip"
+    return send_file(buf, mimetype="application/zip", as_attachment=True, download_name=fname)
 
 
 @app.route("/media")

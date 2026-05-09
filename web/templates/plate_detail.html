@@ -3,7 +3,11 @@
 
 {% block content %}
 <h1>Plate: {{ plate }}</h1>
-<p><a href="{{ url_for('incidents_page') }}">← Back to incidents</a></p>
+<p>
+  <a href="{{ url_for('incidents_page') }}">← Back to incidents</a>
+  &nbsp;·&nbsp;
+  <a href="{{ url_for('sighting_detail', plate=plate) }}">View sightings →</a>
+</p>
 
 {% if plate_info %}
 <div class="info-grid">
@@ -14,23 +18,38 @@
 {% endif %}
 
 {% if incidents %}
-<table>
+<table class="incidents-table">
   <thead>
     <tr>
       <th>Time</th>
       <th>Transcript</th>
       <th>Note</th>
-      <th>Confidence</th>
+      <th>Tags</th>
+      <th>Conf</th>
       <th>Files</th>
+      <th>Actions</th>
     </tr>
   </thead>
   <tbody>
     {% for inc in incidents %}
-    <tr>
+    <tr id="inc-{{ inc.id }}" data-incident-id="{{ inc.id }}">
       <td class="mono">{{ fmt_ts(inc.timestamp) }}</td>
       <td>{{ inc.meta.get('transcript', '') | truncate(120) }}</td>
-      <td>{{ inc.meta.get('parsed_note', '') }}</td>
       <td>
+        <span class="editable-note"
+              contenteditable="true"
+              data-field="parsed_note"
+              data-incident-id="{{ inc.id }}">{{ inc.meta.get('parsed_note', '') }}</span>
+      </td>
+      <td class="tags-cell" data-incident-id="{{ inc.id }}">
+        <span class="tag-list">
+          {% for tag in (inc.meta.get('tags') or []) %}
+          <span class="tag-chip" data-tag="{{ tag }}">{{ tag }}<button class="tag-remove" type="button" title="Remove">×</button></span>
+          {% endfor %}
+        </span>
+        <input type="text" class="tag-input" placeholder="+tag" maxlength="32">
+      </td>
+      <td class="mono">
         {% if inc.meta.get('confidence') is not none %}
           {{ "%.0f%%"|format(inc.meta.confidence * 100) }}
         {% else %}—{% endif %}
@@ -42,6 +61,10 @@
         {% if inc.meta.get('audio_path') %}
           <a href="{{ url_for('serve_media', path=inc.meta.audio_path) }}" target="_blank">audio</a>
         {% endif %}
+        <a href="{{ url_for('incident_export', incident_id=inc.id) }}" title="Download ZIP">zip</a>
+      </td>
+      <td>
+        <button class="btn btn-sm btn-danger" type="button" onclick="deleteIncident({{ inc.id }})">delete</button>
       </td>
     </tr>
     {% endfor %}
@@ -50,4 +73,129 @@
 {% else %}
 <p class="muted">No incidents found for this plate.</p>
 {% endif %}
+
+<script>
+function adminHeaders(extra) {
+  var headers = {'Content-Type': 'application/json'};
+  var token = localStorage.getItem('car_logger_admin_token');
+  if (token) headers['X-Admin-Token'] = token;
+  if (extra) for (var k in extra) headers[k] = extra[k];
+  return headers;
+}
+
+function handleAuthError(d) {
+  if (d && d.error && d.error.indexOf('admin token') !== -1) {
+    alert('Admin token required. In browser console run:\n  localStorage.setItem("car_logger_admin_token", "<token>")');
+    return true;
+  }
+  return false;
+}
+
+// ── Inline note editing ────────────────────────────────────────────────────
+document.querySelectorAll('.editable-note').forEach(function(el) {
+  var original = el.textContent;
+  el.addEventListener('focus', function() { original = el.textContent; });
+  el.addEventListener('blur', function() {
+    var value = el.textContent.trim();
+    if (value === original) return;
+    var id = el.dataset.incidentId;
+    fetch('/incidents/' + id + '/edit', {
+      method: 'POST',
+      headers: adminHeaders(),
+      body: JSON.stringify({parsed_note: value})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        el.classList.add('saved');
+        setTimeout(function() { el.classList.remove('saved'); }, 800);
+        original = value;
+      } else if (!handleAuthError(d)) {
+        alert('Save failed: ' + (d.error || 'unknown'));
+        el.textContent = original;
+      } else {
+        el.textContent = original;
+      }
+    })
+    .catch(function(e) { alert('Request failed: ' + e); el.textContent = original; });
+  });
+  el.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+    if (e.key === 'Escape') { el.textContent = original; el.blur(); }
+  });
+});
+
+// ── Tag chip add/remove ────────────────────────────────────────────────────
+function currentTags(cell) {
+  var chips = cell.querySelectorAll('.tag-chip');
+  return Array.from(chips).map(function(c) { return c.dataset.tag; });
+}
+
+function saveTags(cell, tags) {
+  var id = cell.dataset.incidentId;
+  return fetch('/incidents/' + id + '/edit', {
+    method: 'POST',
+    headers: adminHeaders(),
+    body: JSON.stringify({tags: tags})
+  }).then(function(r) { return r.json(); });
+}
+
+document.querySelectorAll('.tags-cell').forEach(function(cell) {
+  // Add tag on Enter
+  var input = cell.querySelector('.tag-input');
+  if (input) {
+    input.addEventListener('keydown', function(e) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      var raw = input.value.trim();
+      if (!raw) return;
+      var existing = currentTags(cell);
+      if (existing.indexOf(raw) !== -1) { input.value = ''; return; }
+      var newTags = existing.concat([raw]);
+      saveTags(cell, newTags).then(function(d) {
+        if (d.ok) {
+          var chip = document.createElement('span');
+          chip.className = 'tag-chip';
+          chip.dataset.tag = raw;
+          chip.innerHTML = raw + '<button class="tag-remove" type="button" title="Remove">×</button>';
+          cell.querySelector('.tag-list').appendChild(chip);
+          input.value = '';
+        } else if (!handleAuthError(d)) {
+          alert('Save failed: ' + (d.error || 'unknown'));
+        }
+      });
+    });
+  }
+  // Remove tag on × click (event delegation)
+  cell.addEventListener('click', function(e) {
+    if (!e.target.classList.contains('tag-remove')) return;
+    var chip = e.target.closest('.tag-chip');
+    var tag = chip.dataset.tag;
+    var remaining = currentTags(cell).filter(function(t) { return t !== tag; });
+    saveTags(cell, remaining).then(function(d) {
+      if (d.ok) chip.remove();
+      else if (!handleAuthError(d)) alert('Save failed: ' + (d.error || 'unknown'));
+    });
+  });
+});
+
+// ── Delete incident ────────────────────────────────────────────────────────
+function deleteIncident(id) {
+  if (!confirm('Delete incident #' + id + ' and its files? This cannot be undone.')) return;
+  fetch('/incidents/' + id + '/delete', {
+    method: 'POST',
+    headers: adminHeaders()
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.ok) {
+      var row = document.getElementById('inc-' + id);
+      if (row) row.remove();
+    } else if (!handleAuthError(d)) {
+      alert('Delete failed: ' + (d.error || 'unknown'));
+    }
+  })
+  .catch(function(e) { alert('Request failed: ' + e); });
+}
+</script>
 {% endblock %}

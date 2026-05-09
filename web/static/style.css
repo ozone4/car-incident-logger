@@ -214,6 +214,84 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 .snapshot-thumb img { width: 100%; height: auto; display: block; background: #000; }
 .snapshot-caption { padding: 6px 8px; font-size: 0.75rem; color: var(--text-dim); }
 
+/* ── Editable note (inline contenteditable) ──────────────────────────────── */
+.editable-note {
+  display: inline-block;
+  min-width: 80px;
+  min-height: 1.2em;
+  padding: 2px 4px;
+  border: 1px dashed transparent;
+  border-radius: 3px;
+  cursor: text;
+  white-space: pre-wrap;
+}
+.editable-note:hover { border-color: var(--border); }
+.editable-note:focus {
+  outline: none;
+  border-color: var(--text-dim);
+  background: rgba(255,255,255,0.03);
+}
+.editable-note.saved {
+  border-color: #4caf50;
+  background: rgba(76, 175, 80, 0.08);
+}
+
+/* ── Tag chips ───────────────────────────────────────────────────────────── */
+.tags-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  min-width: 160px;
+}
+.tag-list { display: contents; }
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px 2px 8px;
+  background: rgba(120, 160, 200, 0.15);
+  border: 1px solid rgba(120, 160, 200, 0.3);
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+}
+.tag-remove {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 2px;
+}
+.tag-remove:hover { color: #e8533f; }
+.tag-input {
+  width: 70px;
+  padding: 2px 6px;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+.tag-input:focus { outline: none; border-color: var(--text-dim); border-style: solid; }
+
+/* ── Incidents table action buttons ──────────────────────────────────────── */
+.incidents-table .btn-sm {
+  padding: 2px 8px;
+  font-size: 0.75rem;
+}
+.incidents-table .btn-danger {
+  background: rgba(232, 83, 63, 0.12);
+  border: 1px solid rgba(232, 83, 63, 0.4);
+  color: #e8533f;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.incidents-table .btn-danger:hover { background: rgba(232, 83, 63, 0.25); }
+
 /* ── Camera preview ───────────────────────────────────────────────────────── */
 .camera-controls { display: flex; gap: 0.75rem; margin: 1rem 0; }
 
