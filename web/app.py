@@ -12,6 +12,7 @@ Options:
 
 import argparse
 import atexit
+import contextlib
 import json
 import logging
 import sys
@@ -38,13 +39,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from modules.camera_capture import CameraCapture  # noqa: E402
-from modules.alpr_runner import ALPRRunner, _preprocess_crop  # noqa: E402
+from modules.alpr_runner import ALPRRunner  # noqa: E402
 from modules.config_manager import ConfigManager  # noqa: E402
 from modules.dashcam import DashcamRecorder  # noqa: E402
 from modules.health_monitor import HealthMonitor  # noqa: E402
 from modules.loop_recorder import LoopRecorder  # noqa: E402
 from modules.incident_trigger import WebTrigger  # noqa: E402
-from modules.multi_frame_voter import MultiFrameVoter  # noqa: E402
 from modules.gps_reader import GPSReader  # noqa: E402
 from modules.trip_tracker import TripTracker  # noqa: E402
 from modules.plate_database import PlateDatabase  # noqa: E402
@@ -52,6 +52,8 @@ from modules.rolling_buffer import RollingBuffer  # noqa: E402
 from modules.recording_recovery import recover_recordings  # noqa: E402
 from modules.storage_manager import StorageManager  # noqa: E402
 from modules.power_status import read_power_status  # noqa: E402
+
+from web import _alpr  # noqa: E402
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -67,40 +69,13 @@ app = Flask(__name__)
 _camera: Optional[CameraCapture] = None
 _camera_lock = threading.Lock()
 
-# ── Live ALPR state ──────────────────────────────────────────────────────────
-_alpr_thread: Optional[threading.Thread] = None
-_alpr_stop_event = threading.Event()
-_alpr_lock = threading.Lock()
-_alpr_state: dict = {
-    "running": False,
-    "ready": False,
-    "mode": "unavailable",
-    "frames_scanned": 0,
-    "detections_seen": 0,
-    "latest": None,
-    "best": None,
-    "active_sightings": {},
-    "recent_sightings": [],
-    "sightings": [],
-    "error": None,
-}
 
-# Defaults — overridden at runtime from ConfigManager (see _refresh_alpr_tuning)
-SIGHTING_ACTIVE_TIMEOUT_SECONDS = 5.0
-SIGHTING_HISTORY_LIMIT = 30
-MAX_CONSECUTIVE_ALPR_FAILURES = 5
+@contextlib.contextmanager
+def _with_camera():
+    """Context manager: acquire camera lock and yield the current camera (or None)."""
+    with _camera_lock:
+        yield _camera
 
-
-def _refresh_alpr_tuning() -> None:
-    """Pick up ALPR tuning constants from config (called at loop startup)."""
-    global SIGHTING_ACTIVE_TIMEOUT_SECONDS, SIGHTING_HISTORY_LIMIT, MAX_CONSECUTIVE_ALPR_FAILURES
-    try:
-        cfg = _load_config()
-        SIGHTING_ACTIVE_TIMEOUT_SECONDS = float(cfg.alpr_sighting_active_timeout)
-        SIGHTING_HISTORY_LIMIT = int(cfg.alpr_sighting_history_limit)
-        MAX_CONSECUTIVE_ALPR_FAILURES = int(cfg.alpr_max_consecutive_failures)
-    except Exception as exc:
-        logger.warning("Could not read ALPR tuning from config (using defaults): %s", exc)
 
 # ── Loop recorder state ─────────────────────────────────────────────────────
 _loop_recorder: Optional[LoopRecorder] = None
@@ -195,7 +170,7 @@ def _start_camera() -> dict:
 
 def _stop_camera() -> dict:
     global _camera
-    _alpr_stop_event.set()
+    _alpr.signal_stop()
     _stop_loop_recorder()
     _stop_dashcam_buffer()
     with _camera_lock:
@@ -203,7 +178,7 @@ def _stop_camera() -> dict:
             return {"status": "not_running"}
         _camera.stop()
         _camera = None
-    _set_alpr_state(running=False)
+    _alpr.set_state(running=False)
     logger.info("Camera preview stopped")
     return {"status": "stopped"}
 
@@ -338,351 +313,16 @@ def _camera_status() -> dict:
     return {"running": False}
 
 
-# ── Live ALPR management ─────────────────────────────────────────────────────
-
-def _alpr_config() -> dict:
-    cfg = _load_config()
-    return {
-        "confidence_threshold": cfg.alpr_confidence_threshold,
-        "yolo_confidence_threshold": cfg.alpr_yolo_confidence_threshold,
-        "yolo_imgsz": cfg.alpr_yolo_imgsz,
-        "models_dir": cfg.alpr_models_dir,
-        "yolo_model_path": cfg.alpr_yolo_model_path,
-        "vehicle_detection_enabled": cfg.alpr_vehicle_detection_enabled,
-        "vehicle_model_path": cfg.alpr_vehicle_model_path,
-        "vehicle_confidence_threshold": cfg.alpr_vehicle_confidence_threshold,
-        "vehicle_fallback_to_fullframe": cfg.alpr_vehicle_fallback_to_fullframe,
-        "vehicle_imgsz": cfg.alpr_vehicle_imgsz,
-        "ocr_fallback_when_no_detections": cfg.alpr_ocr_fallback_when_no_detections,
-        "fullframe_ocr_confidence_threshold": cfg.alpr_fullframe_ocr_confidence_threshold,
-    }
-
-
-def _set_alpr_state(**updates) -> None:
-    with _alpr_lock:
-        _alpr_state.update(updates)
-        _alpr_state["updated_at"] = time.time()
-
-
-def _save_plate_crop(frame, bbox: list, plate: str) -> Optional[str]:
-    """Save a 640px-wide JPEG of the plate crop. Returns the saved path or None."""
-    try:
-        if bbox is None or frame is None:
-            return None
-        x1, y1, x2, y2 = bbox
-        crop = _preprocess_crop(frame, x1, y1, x2, y2, pad_ratio=0.18, for_ocr=False)
-        cfg = _load_config()
-        out_dir = Path(cfg.storage_base_path) / "sightings" / plate.upper()
-        out_dir.mkdir(parents=True, exist_ok=True)
-        ts_ms = int(time.time() * 1000)
-        path = out_dir / f"{ts_ms}.jpg"
-        cv2.imwrite(str(path), crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
-        logger.debug("Saved plate crop: %s", path)
-        return str(path)
-    except Exception as exc:
-        logger.warning("Could not save plate crop for %s: %s", plate, exc)
-        return None
-
-
-def _format_elapsed(seconds: float) -> str:
-    if seconds < 1:
-        return "now"
-    if seconds < 60:
-        return f"{int(seconds)}s ago"
-    return f"{int(seconds // 60)}m ago"
-
-
-def _new_sighting(plate: str, det: dict, now: float) -> dict:
-    history = None
-    db = _get_db()
-    if db is not None:
-        try:
-            history = db.get_plate_history(plate)
-        except Exception as exc:
-            logger.debug("Could not fetch plate history for %s: %s", plate, exc)
-
-    return {
-        "id": f"{plate}-{int(now * 1000)}",
-        "plate": plate,
-        "raw_text": (det.get("raw_text") or "").strip(),
-        "confidence": float(det.get("confidence", 0.0)),
-        "best_confidence": float(det.get("confidence", 0.0)),
-        "bbox": det.get("bbox"),
-        "frame_w": det.get("frame_w"),
-        "frame_h": det.get("frame_h"),
-        "source": det.get("source"),
-        "first_seen": now,
-        "last_seen": now,
-        "seen_count": 1,
-        "active": True,
-        "history": history,
-        "snapshot_path": None,
-        "_needs_snapshot": True,
-    }
-
-
-def _serialize_sighting(sighting: dict, now: float) -> dict:
-    first_seen = float(sighting.get("first_seen", now))
-    last_seen = float(sighting.get("last_seen", now))
-    active = bool(sighting.get("active", False))
-    return {
-        "id": sighting.get("id"),
-        "plate": sighting.get("plate"),
-        "raw_text": sighting.get("raw_text"),
-        "confidence": round(float(sighting.get("confidence", 0.0)), 3),
-        "best_confidence": round(float(sighting.get("best_confidence", 0.0)), 3),
-        "bbox": sighting.get("bbox"),
-        "frame_w": sighting.get("frame_w"),
-        "frame_h": sighting.get("frame_h"),
-        "source": sighting.get("source"),
-        "first_seen": first_seen,
-        "last_seen": last_seen,
-        "seen_count": int(sighting.get("seen_count", 0)),
-        "active": active,
-        "status": "visible" if active else "gone",
-        "age_seconds": round(now - first_seen, 1),
-        "last_seen_seconds_ago": round(now - last_seen, 1),
-        "last_seen_label": _format_elapsed(now - last_seen),
-        "history": sighting.get("history"),
-        "snapshot_path": sighting.get("snapshot_path"),
-    }
-
-
-def _update_plate_sightings(detections: list[dict], now: float) -> tuple[dict, list[dict], list[dict]]:
-    """Update active/recent plate sightings and return serialized display rows."""
-    active: dict = _alpr_state.setdefault("active_sightings", {})
-    recent: list = _alpr_state.setdefault("recent_sightings", [])
-
-    for det in detections:
-        plate = det.get("plate")
-        if not plate:
-            continue
-        sighting = active.get(plate)
-        if sighting is None:
-            sighting = _new_sighting(plate, det, now)
-            active[plate] = sighting
-        else:
-            sighting["last_seen"] = now
-            sighting["seen_count"] = int(sighting.get("seen_count", 0)) + 1
-            sighting["confidence"] = float(det.get("confidence", sighting.get("confidence", 0.0)))
-            new_best = max(
-                float(sighting.get("best_confidence", 0.0)),
-                float(det.get("confidence", 0.0)),
-            )
-            if new_best > float(sighting.get("best_confidence", 0.0)):
-                sighting["best_confidence"] = new_best
-                sighting["_needs_snapshot"] = True
-            sighting["raw_text"] = (det.get("raw_text") or sighting.get("raw_text") or "").strip()
-            sighting["bbox"] = det.get("bbox") or sighting.get("bbox")
-            if det.get("frame_w"):
-                sighting["frame_w"] = det["frame_w"]
-                sighting["frame_h"] = det["frame_h"]
-            sighting["source"] = det.get("source") or sighting.get("source")
-            sighting["active"] = True
-
-    expired = []
-    for plate, sighting in list(active.items()):
-        if now - float(sighting.get("last_seen", now)) > SIGHTING_ACTIVE_TIMEOUT_SECONDS:
-            sighting["active"] = False
-            expired.append(active.pop(plate))
-
-    if expired:
-        recent[:0] = expired
-        del recent[SIGHTING_HISTORY_LIMIT:]
-
-    active_rows = sorted(active.values(), key=lambda x: x.get("last_seen", 0), reverse=True)
-    history_rows = active_rows + recent[:SIGHTING_HISTORY_LIMIT]
-    serialized = [_serialize_sighting(row, now) for row in history_rows]
-    return active, recent, serialized
-
-
-def _live_alpr_loop() -> None:
-    """Background scanner: sample latest preview frame, run ALPR, vote over time."""
-    _refresh_alpr_tuning()
-    runner = ALPRRunner(_alpr_config())
-    ready = runner.initialize()
-    status = runner.status_info()
-    _set_alpr_state(
-        running=True,
-        ready=ready,
-        mode=status.get("mode", "unavailable"),
-        engine=status,
-        frames_scanned=0,
-        detections_seen=0,
-        latest=None,
-        best=None,
-        active_sightings={},
-        recent_sightings=[],
-        sightings=[],
-        error=None if ready else "ALPR engines are not ready",
-    )
-
-    if not ready:
-        _set_alpr_state(running=False)
-        return
-
-    cfg = _load_config()
-    scan_interval = max(0.0, float(cfg.alpr_scan_interval))
-    voter = MultiFrameVoter(min_votes=1)
-
-    # Use the module-level GPS reader (started at startup); fall back to local if not initialised
-    gps = _gps_reader
-    if gps is None:
-        try:
-            raw_cfg = yaml.safe_load(_config_path().read_text()) or {}
-            gps_cfg = raw_cfg.get("gps", {})
-        except Exception:
-            gps_cfg = {}
-        gps = GPSReader(gps_cfg)
-
-    db = _get_db()
-    consecutive_failures = 0
-
-    while not _alpr_stop_event.is_set():
-        with _camera_lock:
-            cam = _camera
-        if cam is None or not cam.is_running:
-            _set_alpr_state(error="Camera is not running")
-            _alpr_stop_event.wait(0.5)
-            continue
-
-        result = cam.get_frame()
-        if result is None:
-            _set_alpr_state(error="Waiting for first camera frame")
-            _alpr_stop_event.wait(0.2)
-            continue
-
-        frame, _ts = result
-        try:
-            detections = runner.run_on_frame(frame)
-            consecutive_failures = 0
-        except Exception as exc:
-            consecutive_failures += 1
-            logger.warning(
-                "ALPR run_on_frame failed (%d/%d): %s",
-                consecutive_failures, MAX_CONSECUTIVE_ALPR_FAILURES, exc,
-            )
-            if consecutive_failures >= MAX_CONSECUTIVE_ALPR_FAILURES:
-                logger.error(
-                    "ALPR loop disabled after %d consecutive failures: %s",
-                    consecutive_failures, exc,
-                )
-                _set_alpr_state(
-                    error=f"ALPR halted after {consecutive_failures} consecutive failures: {exc}",
-                    running=False,
-                )
-                return
-            _alpr_stop_event.wait(scan_interval)
-            continue
-        voter.add_frame(detections)
-        latest = detections[0] if detections else None
-        best = voter.get_best()
-
-        needs_snap: dict = {}
-        with _alpr_lock:
-            now = time.time()
-            _active, _recent, sightings = _update_plate_sightings(detections, now)
-
-            # Collect plates whose best_confidence just improved (snapshot needed)
-            for plate_key, s in _active.items():
-                if s.get("_needs_snapshot"):
-                    s["_needs_snapshot"] = False
-                    needs_snap[plate_key] = (s.get("bbox"), s.get("best_confidence", 0.0))
-
-            _alpr_state["frames_scanned"] = int(_alpr_state.get("frames_scanned", 0)) + 1
-            _alpr_state["detections_seen"] = int(_alpr_state.get("detections_seen", 0)) + len(detections)
-            _alpr_state["latest"] = latest
-            if best and best.get("plate") and _active:
-                sighting = _active.get(best["plate"])
-                if sighting:
-                    best = {
-                        **best,
-                        "bbox":            sighting.get("bbox"),
-                        "frame_w":         sighting.get("frame_w"),
-                        "frame_h":         sighting.get("frame_h"),
-                        "best_confidence": sighting.get("best_confidence", best.get("confidence", 0.0)),
-                    }
-            _alpr_state["best"] = best
-            _alpr_state["sightings"] = sightings
-            _alpr_state["error"] = None
-            _alpr_state["updated_at"] = now
-
-        # I/O outside the lock: save crops + persist sightings to DB
-        if needs_snap:
-            gps_state = gps.get_state() if gps else None
-            for plate_key, (bbox, best_conf) in needs_snap.items():
-                snap_path = _save_plate_crop(frame, bbox, plate_key)
-                if snap_path:
-                    with _alpr_lock:
-                        active_now = _alpr_state.get("active_sightings", {})
-                        if plate_key in active_now:
-                            active_now[plate_key]["snapshot_path"] = snap_path
-                if db is not None:
-                    try:
-                        db.add_sighting(
-                            plate=plate_key,
-                            confidence=best_conf,
-                            snapshot_path=snap_path,
-                            latitude=gps_state.get("lat") if gps_state else None,
-                            longitude=gps_state.get("lon") if gps_state else None,
-                            speed_kmh=gps_state.get("speed_kmh") if gps_state else None,
-                            heading=gps_state.get("heading") if gps_state else None,
-                            altitude=gps_state.get("altitude") if gps_state else None,
-                            gps_timestamp=gps_state.get("timestamp") if gps_state else None,
-                            gps_backend=gps_state.get("backend_used") if gps_state else None,
-                        )
-                    except Exception as exc:
-                        logger.warning("Could not persist sighting for %s: %s", plate_key, exc)
-
-        _alpr_stop_event.wait(scan_interval)
-
-    _set_alpr_state(running=False)
-
-
-def _start_live_alpr() -> dict:
-    global _alpr_thread
-    with _alpr_lock:
-        if _alpr_state.get("running"):
-            return {"status": "already_running", **_alpr_state}
-
-    # Reuse the preview camera; start it automatically if needed.
-    if not _camera_status().get("running"):
-        _start_camera()
-
-    _alpr_stop_event.clear()
-    _set_alpr_state(
-        running=True,
-        ready=False,
-        mode="initializing",
-        frames_scanned=0,
-        detections_seen=0,
-        latest=None,
-        best=None,
-        active_sightings={},
-        recent_sightings=[],
-        sightings=[],
-        error="Initializing ALPR engines",
-    )
-    _alpr_thread = threading.Thread(target=_live_alpr_loop, daemon=True, name="LiveALPR")
-    _alpr_thread.start()
-    return {"status": "started", **_get_live_alpr_status()}
-
-
-def _stop_live_alpr() -> dict:
-    _alpr_stop_event.set()
-    thread = _alpr_thread
-    if thread and thread.is_alive():
-        thread.join(timeout=2.0)
-    _set_alpr_state(running=False)
-    return {"status": "stopped", **_get_live_alpr_status()}
-
-
-def _get_live_alpr_status() -> dict:
-    with _alpr_lock:
-        now = time.time()
-        _active, _recent, sightings = _update_plate_sightings([], now)
-        _alpr_state["sightings"] = sightings
-        return dict(_alpr_state)
+# ── Wire ALPR module to its dependencies ─────────────────────────────────────
+_alpr.configure(
+    with_camera=_with_camera,
+    get_camera_status=_camera_status,
+    start_camera=_start_camera,
+    get_db=_get_db,
+    get_gps_reader=lambda: _gps_reader,
+    load_config=_load_config,
+    config_path=_config_path,
+)
 
 
 # ── MJPEG stream ──────────────────────────────────────────────────────────────
@@ -800,7 +440,7 @@ def alpr_test_frame_api():
     if result is None:
         return jsonify({"ok": False, "error": "No frame available yet"}), 503
 
-    runner = ALPRRunner(_alpr_config())
+    runner = ALPRRunner(_alpr.alpr_runner_config())
     ready = runner.initialize()
     status = runner.status_info()
     detections = runner.run_on_frame(result[0]) if ready else []
@@ -1041,17 +681,17 @@ def sightings_image():
 
 @app.route("/alpr/live/status")
 def alpr_live_status_api():
-    return jsonify(_get_live_alpr_status())
+    return jsonify(_alpr.get_status())
 
 
 @app.route("/alpr/live/start", methods=["POST"])
 def alpr_live_start_api():
-    return jsonify(_start_live_alpr())
+    return jsonify(_alpr.start())
 
 
 @app.route("/alpr/live/stop", methods=["POST"])
 def alpr_live_stop_api():
-    return jsonify(_stop_live_alpr())
+    return jsonify(_alpr.stop())
 
 
 # ── Loop recorder management ────────────────────────────────────────────────
@@ -1186,13 +826,13 @@ def dashcam_trigger_api():
 
     # Gather current ALPR state for metadata
     meta: dict = {}
-    with _alpr_lock:
-        best = _alpr_state.get("best")
-        if best and best.get("plate"):
-            meta["alpr_plate"] = best["plate"]
-        sightings = _alpr_state.get("sightings", [])
-        if sightings:
-            meta["recent_sightings"] = sightings[:10]
+    alpr_snap = _alpr.get_state_snapshot()
+    best = alpr_snap.get("best")
+    if best and best.get("plate"):
+        meta["alpr_plate"] = best["plate"]
+    sightings = alpr_snap.get("sightings", [])
+    if sightings:
+        meta["recent_sightings"] = sightings[:10]
 
     # Mark immediately so the dashboard poll cannot mistake a previous completed
     # capture for this newly accepted one before the background thread starts.
@@ -1268,8 +908,7 @@ def health_api():
     dashcam_armed = _web_trigger.is_armed if _web_trigger else False
     rec_status = _loop_recorder.status() if _loop_recorder else {}
 
-    with _alpr_lock:
-        alpr = dict(_alpr_state)
+    alpr = _alpr.get_state_snapshot()
 
     stor_status = _storage_manager.status() if _storage_manager else None
 
@@ -1862,7 +1501,7 @@ def _auto_start_dashcam_services() -> None:
 
     if cfg.dashcam_auto_start_alpr:
         try:
-            result = _start_live_alpr()
+            result = _alpr.start()
             logger.info("Auto-start ALPR: %s", result.get("status"))
         except Exception as exc:  # noqa: BLE001
             logger.warning("Auto-start ALPR failed: %s", exc)
