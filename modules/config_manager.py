@@ -170,6 +170,18 @@ class ConfigManager:
         return float(self.get("alpr", "scan_interval_seconds", default=2.0))
 
     @property
+    def alpr_sighting_active_timeout(self) -> float:
+        return float(self.get("alpr", "sighting_active_timeout_seconds", default=5.0))
+
+    @property
+    def alpr_sighting_history_limit(self) -> int:
+        return int(self.get("alpr", "sighting_history_limit", default=30))
+
+    @property
+    def alpr_max_consecutive_failures(self) -> int:
+        return int(self.get("alpr", "max_consecutive_failures", default=5))
+
+    @property
     def alpr_yolo_model_path(self) -> str:
         default = str(self.storage_base_path / "models" / "plate_detector.pt")
         return str(self.get("alpr", "yolo_model_path", default=default))

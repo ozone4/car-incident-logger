@@ -85,9 +85,22 @@ _alpr_state: dict = {
     "error": None,
 }
 
+# Defaults — overridden at runtime from ConfigManager (see _refresh_alpr_tuning)
 SIGHTING_ACTIVE_TIMEOUT_SECONDS = 5.0
 SIGHTING_HISTORY_LIMIT = 30
-MAX_CONSECUTIVE_ALPR_FAILURES = 5  # stop the loop after this many run_on_frame errors in a row
+MAX_CONSECUTIVE_ALPR_FAILURES = 5
+
+
+def _refresh_alpr_tuning() -> None:
+    """Pick up ALPR tuning constants from config (called at loop startup)."""
+    global SIGHTING_ACTIVE_TIMEOUT_SECONDS, SIGHTING_HISTORY_LIMIT, MAX_CONSECUTIVE_ALPR_FAILURES
+    try:
+        cfg = _load_config()
+        SIGHTING_ACTIVE_TIMEOUT_SECONDS = float(cfg.alpr_sighting_active_timeout)
+        SIGHTING_HISTORY_LIMIT = int(cfg.alpr_sighting_history_limit)
+        MAX_CONSECUTIVE_ALPR_FAILURES = int(cfg.alpr_max_consecutive_failures)
+    except Exception as exc:
+        logger.warning("Could not read ALPR tuning from config (using defaults): %s", exc)
 
 # ── Loop recorder state ─────────────────────────────────────────────────────
 _loop_recorder: Optional[LoopRecorder] = None
@@ -485,6 +498,7 @@ def _update_plate_sightings(detections: list[dict], now: float) -> tuple[dict, l
 
 def _live_alpr_loop() -> None:
     """Background scanner: sample latest preview frame, run ALPR, vote over time."""
+    _refresh_alpr_tuning()
     runner = ALPRRunner(_alpr_config())
     ready = runner.initialize()
     status = runner.status_info()
