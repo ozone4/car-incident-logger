@@ -68,6 +68,22 @@ main.py / web/app.py              Orchestrator + Flask dashboard/API
 3. Grace expires or battery critical: stop camera/recording cleanly, `sync`, then suspend.
 4. Resume/power return: restart app/camera/AP as needed.
 
+## Admin auth (destructive routes)
+
+Set `security.admin_token` in `config.yaml` to a long random string when the
+laptop's Wi-Fi AP is reachable by anyone other than you. Routes that delete
+files or unlock segments require the matching `X-Admin-Token` header (or
+`?token=` query param). Empty token = auth disabled (dev mode).
+
+To use the dashboard with auth enabled, set the token in your iPad's Safari
+once via the dev console:
+```js
+localStorage.setItem('car_logger_admin_token', '<your token>')
+```
+
+Authed routes: `/recordings/delete`, `/recordings/unlock`,
+`/storage/cleanup` (non-dry-run), `/storage/recovery/run`.
+
 ## Implementation plan — Lenovo AP + iPad + GPS
 
 ### Phase A — GPS enhancement

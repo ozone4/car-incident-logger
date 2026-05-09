@@ -10,6 +10,12 @@ Recovery actions:
   - If video has frames (non-empty): finalize with metadata marking it recovered.
   - If video is empty/invalid: move to a corrupt folder.
   - Temp metadata files: remove (the video rename is the source of truth).
+
+IMPORTANT: This MUST run before LoopRecorder starts. Recovery touches files
+matching the same _INPROGRESS pattern that LoopRecorder uses for the segment
+it's currently writing — running both concurrently can corrupt the active
+segment. The web app guards this in `/storage/recovery/run` by refusing to
+fire while the recorder reports `recording=True`.
 """
 
 import json

@@ -270,6 +270,11 @@ class ConfigManager:
     def log_backup_count(self) -> int:
         return int(self.get("logging", "backup_count", default=3))
 
+    @property
+    def admin_token(self) -> str:
+        """Shared secret for destructive routes. Empty string disables auth."""
+        return str(self.get("security", "admin_token", default="") or "")
+
 
 def setup_logging(config: ConfigManager) -> None:
     """Configure root logger from config settings."""

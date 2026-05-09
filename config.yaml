@@ -130,6 +130,13 @@ wifi_ap:
   dhcp_range_end: 192.168.77.50
   password: ""                # WPA2 passphrase; empty = open network (not recommended)
 
+security:
+  # Shared secret for destructive routes (delete recordings, unlock segments,
+  # cleanup, recovery). Set to a long random string when the laptop's Wi-Fi AP
+  # might be reachable by someone other than you. Empty = no auth (dev mode).
+  # Clients send the value via the X-Admin-Token header.
+  admin_token: ""
+
 logging:
   level: INFO              # DEBUG, INFO, WARNING, ERROR
   file: ./data/logs/system.log

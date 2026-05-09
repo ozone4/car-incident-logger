@@ -92,18 +92,35 @@ function closePlayer() {
   modal.classList.add('hidden');
 }
 
+function adminHeaders() {
+  // Token is set by the user in the browser console:
+  //   localStorage.setItem('car_logger_admin_token', '<your token>')
+  var headers = {'Content-Type': 'application/json'};
+  var token = localStorage.getItem('car_logger_admin_token');
+  if (token) headers['X-Admin-Token'] = token;
+  return headers;
+}
+
+function handleAuthError(d) {
+  if (d && d.error && d.error.indexOf('admin token') !== -1) {
+    alert('Admin token required. In browser console run:\n  localStorage.setItem("car_logger_admin_token", "<token>")');
+    return true;
+  }
+  return false;
+}
+
 function toggleLock(id, lock, rowIdx) {
   var url = lock ? '/recordings/lock' : '/recordings/unlock';
   fetch(url, {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+    headers: adminHeaders(),
     body: JSON.stringify({id: id})
   })
   .then(function(r) { return r.json(); })
   .then(function(d) {
     if (d.ok) {
       location.reload();
-    } else {
+    } else if (!handleAuthError(d)) {
       alert('Error: ' + (d.error || 'unknown'));
     }
   })
@@ -114,7 +131,7 @@ function deleteRecording(id, rowIdx) {
   if (!confirm('Delete recording ' + id + '? This cannot be undone.')) return;
   fetch('/recordings/delete', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+    headers: adminHeaders(),
     body: JSON.stringify({id: id})
   })
   .then(function(r) { return r.json(); })
@@ -122,7 +139,7 @@ function deleteRecording(id, rowIdx) {
     if (d.ok) {
       var row = document.getElementById('row-' + rowIdx);
       if (row) row.remove();
-    } else {
+    } else if (!handleAuthError(d)) {
       alert('Error: ' + (d.error || 'unknown'));
     }
   })

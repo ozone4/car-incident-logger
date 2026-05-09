@@ -87,6 +87,7 @@ _alpr_state: dict = {
 
 SIGHTING_ACTIVE_TIMEOUT_SECONDS = 5.0
 SIGHTING_HISTORY_LIMIT = 30
+MAX_CONSECUTIVE_ALPR_FAILURES = 5  # stop the loop after this many run_on_frame errors in a row
 
 # ── Loop recorder state ─────────────────────────────────────────────────────
 _loop_recorder: Optional[LoopRecorder] = None
@@ -120,6 +121,28 @@ def _config_path() -> Path:
 
 def _load_config() -> ConfigManager:
     return ConfigManager(str(_config_path()))
+
+
+# ── Auth helper ───────────────────────────────────────────────────────────────
+
+def _check_admin_token():
+    """Return None when access is granted, or a (response, status) tuple to abort.
+
+    Auth is opt-in: if `security.admin_token` is empty in config, all requests
+    pass (dev mode). Otherwise, the request must present the matching token via
+    `X-Admin-Token` header or `?token=` query parameter.
+    """
+    try:
+        expected = _load_config().admin_token
+    except Exception:
+        return None  # config unavailable — fail open so admin can fix it
+    if not expected:
+        return None  # auth disabled
+    presented = request.headers.get("X-Admin-Token") or request.args.get("token", "")
+    if presented and presented == expected:
+        return None
+    logger.warning("Auth rejected for %s %s from %s", request.method, request.path, request.remote_addr)
+    return jsonify({"ok": False, "error": "Unauthorized — admin token required"}), 401
 
 
 # ── DB helper ─────────────────────────────────────────────────────────────────
@@ -499,6 +522,7 @@ def _live_alpr_loop() -> None:
         gps = GPSReader(gps_cfg)
 
     db = _get_db()
+    consecutive_failures = 0
 
     while not _alpr_stop_event.is_set():
         with _camera_lock:
@@ -517,8 +541,23 @@ def _live_alpr_loop() -> None:
         frame, _ts = result
         try:
             detections = runner.run_on_frame(frame)
+            consecutive_failures = 0
         except Exception as exc:
-            logger.warning("ALPR run_on_frame failed: %s", exc)
+            consecutive_failures += 1
+            logger.warning(
+                "ALPR run_on_frame failed (%d/%d): %s",
+                consecutive_failures, MAX_CONSECUTIVE_ALPR_FAILURES, exc,
+            )
+            if consecutive_failures >= MAX_CONSECUTIVE_ALPR_FAILURES:
+                logger.error(
+                    "ALPR loop disabled after %d consecutive failures: %s",
+                    consecutive_failures, exc,
+                )
+                _set_alpr_state(
+                    error=f"ALPR halted after {consecutive_failures} consecutive failures: {exc}",
+                    running=False,
+                )
+                return
             _alpr_stop_event.wait(scan_interval)
             continue
         voter.add_frame(detections)
@@ -579,7 +618,7 @@ def _live_alpr_loop() -> None:
                             gps_backend=gps_state.get("backend_used") if gps_state else None,
                         )
                     except Exception as exc:
-                        logger.debug("Could not persist sighting for %s: %s", plate_key, exc)
+                        logger.warning("Could not persist sighting for %s: %s", plate_key, exc)
 
         _alpr_stop_event.wait(scan_interval)
 
@@ -1340,9 +1379,14 @@ def trip_current_api():
 @app.route("/storage/cleanup", methods=["POST"])
 def storage_cleanup_api():
     """Trigger a manual storage cleanup pass."""
+    dry_run = request.args.get("dry_run", "false").lower() in ("true", "1", "yes")
+    if not dry_run:
+        # Real deletes require admin auth; dry-runs are read-only and stay open.
+        auth = _check_admin_token()
+        if auth is not None:
+            return auth
     if _storage_manager is None:
         _start_storage_manager()
-    dry_run = request.args.get("dry_run", "false").lower() in ("true", "1", "yes")
     result = _storage_manager.run_cleanup(dry_run=dry_run)
     return jsonify(result)
 
@@ -1357,8 +1401,20 @@ def storage_recovery_api():
 
 @app.route("/storage/recovery/run", methods=["POST"])
 def storage_recovery_run_api():
-    """Manually trigger recording recovery scan."""
+    """Manually trigger recording recovery scan.
+
+    Refuses to run while LoopRecorder is active — recovery scans for
+    in-progress segments and would race with the active writer.
+    """
+    auth = _check_admin_token()
+    if auth is not None:
+        return auth
     global _last_recovery_result
+    if _loop_recorder is not None and _loop_recorder.status().get("recording"):
+        return jsonify({
+            "ok": False,
+            "error": "LoopRecorder is currently writing — stop the camera before running recovery.",
+        }), 409
     cfg = _load_config()
     _last_recovery_result = recover_recordings(cfg.recording_output_path)
     return jsonify(_last_recovery_result)
@@ -1573,6 +1629,9 @@ def recordings_lock():
 @app.route("/recordings/unlock", methods=["POST"])
 def recordings_unlock():
     """Set locked=false on a recording sidecar."""
+    auth = _check_admin_token()
+    if auth is not None:
+        return auth
     rec_id = request.form.get("id") or (request.get_json() or {}).get("id", "")
     if not rec_id:
         return jsonify({"ok": False, "error": "Missing recording id"}), 400
@@ -1594,6 +1653,9 @@ def recordings_unlock():
 @app.route("/recordings/delete", methods=["POST"])
 def recordings_delete():
     """Delete an unlocked recording segment and its sidecar."""
+    auth = _check_admin_token()
+    if auth is not None:
+        return auth
     rec_id = request.form.get("id") or (request.get_json() or {}).get("id", "")
     if not rec_id:
         return jsonify({"ok": False, "error": "Missing recording id"}), 400

@@ -8,19 +8,43 @@ incidents (id, plate_id, timestamp, clip_path, metadata_json)
 sightings (id, plate, timestamp, confidence, snapshot_path, matched)
 """
 
+import functools
 import json
 import logging
 import sqlite3
 import threading
+import time as _time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _retry_on_busy(func: Callable) -> Callable:
+    """Decorator: retry a SQLite write up to 2 extra times on 'database is locked'.
+
+    WAL mode normally avoids this, but two writer threads (e.g. ALPR + trip
+    tracker firing simultaneously) can still hit it. Brief backoffs are enough.
+    """
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        for attempt in range(3):
+            try:
+                return func(*args, **kwargs)
+            except sqlite3.OperationalError as exc:
+                if "lock" in str(exc).lower() and attempt < 2:
+                    logger.debug(
+                        "SQLite busy on %s (attempt %d); retrying", func.__name__, attempt + 1
+                    )
+                    _time.sleep(0.05 * (attempt + 1))  # 50ms, 100ms
+                    continue
+                raise
+    return wrapper
 
 
 class PlateDatabase:
@@ -160,6 +184,7 @@ class PlateDatabase:
 
     # ── Incidents ─────────────────────────────────────────────────────────────
 
+    @_retry_on_busy
     def add_incident(self, plate: str, metadata: dict) -> int:
         """
         Record a manual (button-triggered) incident.
@@ -205,6 +230,7 @@ class PlateDatabase:
 
     # ── Sightings (Phase 2 ALPR) ──────────────────────────────────────────────
 
+    @_retry_on_busy
     def add_sighting(
         self,
         plate: str,
@@ -308,6 +334,7 @@ class PlateDatabase:
 
     # ── Trips ─────────────────────────────────────────────────────────────────
 
+    @_retry_on_busy
     def start_trip(self) -> int:
         """Open a new trip row and return its id."""
         conn = self._conn()
@@ -318,6 +345,7 @@ class PlateDatabase:
         logger.info("Trip started: id=%d", cur.lastrowid)
         return cur.lastrowid  # type: ignore[return-value]
 
+    @_retry_on_busy
     def end_trip(self, trip_id: int) -> None:
         """Set ended_at on a trip row."""
         conn = self._conn()
@@ -326,6 +354,7 @@ class PlateDatabase:
         )
         conn.commit()
 
+    @_retry_on_busy
     def add_trip_point(
         self,
         trip_id: int,
@@ -370,6 +399,7 @@ class PlateDatabase:
 
     # ── Maintenance ───────────────────────────────────────────────────────────
 
+    @_retry_on_busy
     def delete_plate(self, plate: str) -> bool:
         """Remove a plate and all its incidents from the database."""
         plate = plate.upper().strip()
