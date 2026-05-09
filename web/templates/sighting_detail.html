@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}{{ plate }} sightings — Car Incident Logger{% endblock %}
+
+{% block content %}
+<h1>Sightings: {{ plate }}</h1>
+<p>
+  <a href="{{ url_for('dashboard') }}">← Dashboard</a>
+  &nbsp;·&nbsp;
+  <a href="{{ url_for('plate_detail', plate=plate) }}">View incident history →</a>
+</p>
+
+{% if history %}
+<div class="info-grid">
+  <div><span class="label">Total sightings</span> <span class="mono">{{ history.total_sightings }}</span></div>
+  <div><span class="label">Total incidents</span> <span class="mono">{{ history.total_incidents }}</span></div>
+  <div><span class="label">First seen</span> <span class="mono">{{ fmt_ts(history.first_seen) }}</span></div>
+  <div><span class="label">Last seen</span>  <span class="mono">{{ fmt_ts(history.last_seen) }}</span></div>
+  {% if history.last_location %}
+  <div>
+    <span class="label">Last location</span>
+    <span class="mono">{{ "%.5f"|format(history.last_location.lat) }}, {{ "%.5f"|format(history.last_location.lon) }}</span>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if snapshots %}
+<h2>Recent snapshots</h2>
+<div class="snapshot-gallery">
+  {% for s in snapshots %}
+  <a href="{{ url_for('sightings_image', path=s.snapshot_path) }}" target="_blank" class="snapshot-thumb">
+    <img src="{{ url_for('sightings_image', path=s.snapshot_path) }}" alt="Plate snapshot at {{ s.timestamp }}" loading="lazy">
+    <span class="snapshot-caption mono">{{ fmt_ts(s.timestamp) }} · {{ "%.0f%%"|format((s.confidence or 0) * 100) }}</span>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+
+<h2>Timeline ({{ sightings|length }})</h2>
+{% if sightings %}
+<table>
+  <thead>
+    <tr>
+      <th>Time</th>
+      <th>Confidence</th>
+      <th>Location</th>
+      <th>Snapshot</th>
+      <th>Matched</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for s in sightings %}
+    <tr>
+      <td class="mono">{{ fmt_ts(s.timestamp) }}</td>
+      <td class="mono">{{ "%.0f%%"|format((s.confidence or 0) * 100) }}</td>
+      <td class="mono">
+        {% if s.latitude is not none and s.longitude is not none %}
+          <a href="https://www.openstreetmap.org/?mlat={{ s.latitude }}&mlon={{ s.longitude }}#map=16/{{ s.latitude }}/{{ s.longitude }}" target="_blank" rel="noreferrer">
+            {{ "%.5f"|format(s.latitude) }}, {{ "%.5f"|format(s.longitude) }}
+          </a>
+        {% else %}—{% endif %}
+      </td>
+      <td>
+        {% if s.snapshot_path %}
+          <a href="{{ url_for('sightings_image', path=s.snapshot_path) }}" target="_blank">view</a>
+        {% else %}—{% endif %}
+      </td>
+      <td>{% if s.matched %}<span class="mono">known</span>{% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No sightings recorded for this plate yet.</p>
+{% endif %}
+{% endblock %}

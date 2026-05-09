@@ -241,6 +241,7 @@ const Icons = {
   gps:       () => <Icon><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="7" strokeDasharray="2 2"/></Icon>,
   wifi:      () => <Icon><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></Icon>,
   nav:       () => <Icon><polygon points="3,11 22,2 13,21 11,13"/></Icon>,
+  gear:      () => <Icon><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></Icon>,
 };
 
 /* ────────────────────────────────────────────────────────────
@@ -366,6 +367,12 @@ function TopBar({ view, setView, recording, muted, setMuted, recStatus, gps }) {
             <Icons.grid/> <span>Controls</span>
           </button>
         </div>
+        <div className="nav-group" role="navigation">
+          <a href="/recordings" className="nav-btn" title="Recordings"><Icons.hdd/><span>Recordings</span></a>
+          <a href="/incidents"  className="nav-btn" title="Incidents"><Icons.alert/><span>Incidents</span></a>
+          <a href="/trips"      className="nav-btn" title="Trips"><Icons.nav/><span>Trips</span></a>
+          <a href="/config"     className="nav-btn" title="Config"><Icons.gear/><span>Config</span></a>
+        </div>
       </div>
 
       <div className="topbar-right">
@@ -432,10 +439,38 @@ function TelemetryStrip({ alpr, gps }) {
 /* GPS speed + status widget */
 function GPSWidget({ gps, trip }) {
   const state = gps?.state;
-  const available = gps?.available && state && !state.stale && !state.error;
-  const speed = available && state.speed_kmh != null ? Math.round(state.speed_kmh) : null;
-  const fix = available ? (state.fix_quality >= 3 ? "3D" : state.fix_quality >= 2 ? "2D" : "no fix") : null;
+  const enabled = !!gps?.enabled;
+  const hardware = !!gps?.available;
+  const hasFix = !!(state && state.lat != null && state.lon != null);
+  const stale = !!state?.stale;
+  const error = state?.error || null;
+  const live = hardware && hasFix && !stale && !error;
+  const speed = live && state.speed_kmh != null ? Math.round(state.speed_kmh) : null;
+  const fix = live ? (state.fix_quality >= 3 ? "3D" : state.fix_quality >= 2 ? "2D" : "fix") : null;
   const backend = state?.backend_used || null;
+
+  // Pill label + class, in order of severity
+  let pillLabel, pillClass, statusLine;
+  if (!enabled) {
+    pillLabel = "disabled"; pillClass = "";
+    statusLine = "GPS disabled in config";
+  } else if (!hardware) {
+    pillLabel = "no hw"; pillClass = "pill-warn";
+    statusLine = "No GPS hardware detected";
+  } else if (error) {
+    pillLabel = "error"; pillClass = "pill-warn";
+    statusLine = error;
+  } else if (!hasFix) {
+    pillLabel = "searching"; pillClass = "";
+    statusLine = state?.satellites ? `Acquiring satellites (${state.satellites} visible)…` : "Acquiring satellites…";
+  } else if (stale) {
+    pillLabel = "stale"; pillClass = "pill-warn";
+    const ageSec = state?.timestamp ? Math.round((Date.now() - new Date(state.timestamp).getTime()) / 1000) : null;
+    statusLine = ageSec != null ? `GPS stale (last fix ${ageSec}s ago)` : "GPS stale";
+  } else {
+    pillLabel = fix; pillClass = "pill-ok";
+    statusLine = null;
+  }
 
   const elapsed = trip?.trip?.elapsed_seconds;
   const tripLabel = elapsed != null ? fmtDuration(elapsed) : null;
@@ -444,21 +479,21 @@ function GPSWidget({ gps, trip }) {
     <section className="card gps-widget">
       <div className="card-head">
         <span className="eyebrow"><Icons.gps/> GPS</span>
-        <span className={`pill ${available ? "pill-ok" : ""}`}>
-          {available ? fix || "fix" : gps?.enabled ? "no fix" : "disabled"}
-        </span>
+        <span className={`pill ${pillClass}`}>{pillLabel}</span>
       </div>
       <div className="gps-main">
         <span className="gps-speed fig">{speed != null ? speed : "—"}</span>
         <span className="gps-speed-unit mono">km/h</span>
       </div>
-      {available && (
+      {live ? (
         <div className="gps-meta mono">
           {state.heading != null && <span>{Math.round(state.heading)}° hdg</span>}
           {state.altitude != null && <span>{Math.round(state.altitude)}m alt</span>}
           {state.satellites != null && <span>{state.satellites} sat</span>}
           {backend && <span>{backend}</span>}
         </div>
+      ) : (
+        statusLine && <div className="gps-status muted mono">{statusLine}</div>
       )}
       {tripLabel && (
         <div className="gps-trip mono">
@@ -507,7 +542,7 @@ function SightingsPanel({ rows, running }) {
           const showHistory = hist && hist.total_sightings > 0 && histAge;
           return (
             <li key={i} className={`sight-row ${r.active ? "is-active" : ""} ${r.flagged ? "is-flag" : ""}`}>
-              <span className="sight-plate mono">{r.plate}</span>
+              <a className="sight-plate mono" href={`/sightings/${encodeURIComponent(r.plate)}`} title={`View sightings of ${r.plate}`}>{r.plate}</a>
               <span className="sight-meta">
                 <span className="sight-conf fig">{Math.round((r.confidence || 0) * 100)}<span className="muted">%</span></span>
                 <span className="sight-count mono">×{r.count}</span>
@@ -791,6 +826,19 @@ function IncidentButton({ size = "lg", onCapture }) {
    ──────────────────────────────────────────────────────────── */
 
 function LiveView({ muted, sightings, incidents, frozen, setFrozen, alpr, health, appliance, gps, trip }) {
+  const [lockState, setLockState] = useState("idle"); // idle | locking | locked | error
+  const lockSegment = async () => {
+    if (lockState === "locking") return;
+    setLockState("locking");
+    try {
+      const r = await fetch("/recordings/lock/current", { method: "POST" });
+      const body = await r.json().catch(() => ({}));
+      setLockState(r.ok && body.ok ? "locked" : "error");
+    } catch {
+      setLockState("error");
+    }
+    setTimeout(() => setLockState("idle"), 2000);
+  };
   return (
     <div className="live-view">
       <div className="live-stage">
@@ -800,11 +848,18 @@ function LiveView({ muted, sightings, incidents, frozen, setFrozen, alpr, health
             {frozen ? <Icons.play/> : <Icons.pause/>}
             <span>{frozen ? "Resume" : "Pause"}</span>
           </button>
-          <button className="ctl-pill">
-            <Icons.pin/> <span>Lock segment</span>
-          </button>
-          <button className="ctl-pill">
-            <Icons.swap/> <span>Front cam</span>
+          <button
+            className={`ctl-pill ${lockState === "locked" ? "is-on" : ""} ${lockState === "error" ? "is-warn" : ""}`}
+            onClick={lockSegment}
+            disabled={lockState === "locking"}
+          >
+            <Icons.pin/>
+            <span>
+              {lockState === "locking" ? "Locking…"
+                : lockState === "locked" ? "Locked ✓"
+                : lockState === "error" ? "Failed"
+                : "Lock segment"}
+            </span>
           </button>
         </div>
         <TelemetryStrip alpr={alpr} gps={gps}/>
@@ -1019,6 +1074,35 @@ function App() {
   useEffect(() => setMuted(tweaks.muted),   [tweaks.muted]);
   useEffect(() => setFrozen(tweaks.frozen), [tweaks.frozen]);
 
+  // Sync mute state with backend on mount (one-shot)
+  useEffect(() => {
+    fetch("/audio/status").then(r => r.ok ? r.json() : null).then(body => {
+      if (body && typeof body.enabled === "boolean") {
+        const m = !body.enabled;
+        setMuted(m);
+        setTweak("muted", m);
+      }
+    }).catch(() => {});
+  }, []);
+
+  // Toggle mute: ask backend to flip, mirror its response into UI state
+  const toggleMute = async () => {
+    try {
+      const r = await fetch("/audio/toggle", { method: "POST" });
+      const body = await r.json().catch(() => ({}));
+      if (typeof body.enabled === "boolean") {
+        const m = !body.enabled;
+        setMuted(m);
+        setTweak("muted", m);
+        return;
+      }
+    } catch {}
+    // Fallback: optimistic local flip if backend is unreachable
+    const m = !muted;
+    setMuted(m);
+    setTweak("muted", m);
+  };
+
   const sightings = transformSightings(alpr.sightings);
   const recording = recStatus.recording;
 
@@ -1029,7 +1113,7 @@ function App() {
         setView={(v) => { setView(v); setTweak("view", v); }}
         recording={recording}
         muted={muted}
-        setMuted={(m) => { setMuted(m); setTweak("muted", m); }}
+        setMuted={toggleMute}
         recStatus={recStatus}
         gps={gps}
       />
@@ -1052,7 +1136,7 @@ function App() {
           <ControlsView
             recording={recording}
             muted={muted}
-            setMuted={(m) => { setMuted(m); setTweak("muted", m); }}
+            setMuted={toggleMute}
             health={health}
             alpr={alpr}
             appliance={appliance}

@@ -192,6 +192,28 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 }
 .info-grid .label { color: var(--text-dim); margin-right: 0.4rem; }
 
+/* ── Sighting snapshot gallery ────────────────────────────────────────────── */
+.snapshot-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 0.75rem 0 1.5rem;
+}
+.snapshot-thumb {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 100ms ease;
+}
+.snapshot-thumb:hover { border-color: var(--text-dim); }
+.snapshot-thumb img { width: 100%; height: auto; display: block; background: #000; }
+.snapshot-caption { padding: 6px 8px; font-size: 0.75rem; color: var(--text-dim); }
+
 /* ── Camera preview ───────────────────────────────────────────────────────── */
 .camera-controls { display: flex; gap: 0.75rem; margin: 1rem 0; }
 

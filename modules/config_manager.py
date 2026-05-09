@@ -57,6 +57,10 @@ class ConfigManager:
         return int(self.get("buffer", "duration_seconds", default=45))
 
     @property
+    def audio_enabled(self) -> bool:
+        return bool(self.get("audio", "enabled", default=True))
+
+    @property
     def audio_device_index(self) -> Optional[int]:
         val = self.get("audio", "device_index", default=None)
         return int(val) if val is not None else None

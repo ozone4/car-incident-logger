@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Trips — Car Incident Logger{% endblock %}
+
+{% block content %}
+<h1>Trips</h1>
+<p><a href="{{ url_for('dashboard') }}">← Dashboard</a></p>
+
+{% if trips %}
+<table>
+  <thead>
+    <tr>
+      <th>Started</th>
+      <th>Ended</th>
+      <th>Duration</th>
+      <th>Breadcrumbs</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for t in trips %}
+    <tr>
+      <td class="mono">{{ fmt_ts(t.started_at) }}</td>
+      <td class="mono">
+        {% if t.ended_at %}{{ fmt_ts(t.ended_at) }}{% else %}<em>in progress</em>{% endif %}
+      </td>
+      <td class="mono">{{ t.duration_label or "—" }}</td>
+      <td class="mono">{{ t.point_count }}</td>
+      <td><a href="{{ url_for('trip_detail', trip_id=t.id) }}">view →</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No trips recorded yet. Trips begin automatically when the logger starts and GPS is enabled.</p>
+{% endif %}
+{% endblock %}

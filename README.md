@@ -324,8 +324,7 @@ car-incident-logger/
 │   ├── overlay.py               # Timestamp overlay for recorded frames
 │   ├── incident_trigger.py      # Abstract trigger interface (web, hardware, ALPR)
 │   ├── alpr_runner.py           # Phase 2: YOLO+FastPlateOCR pipeline (deps optional)
-│   ├── multi_frame_voter.py     # Phase 2: aggregate candidates across frames
-│   └── live_matcher.py          # Phase 2 stub: background known-plate alerting
+│   └── multi_frame_voter.py     # Phase 2: aggregate candidates across frames
 ├── data/
 │   ├── plates/                  # Per-plate incident folders
 │   ├── recordings/              # Continuous loop recording segments (by date)
@@ -655,7 +654,7 @@ python scripts/test_alpr.py --camera --frames 30
 - **Model quality is the bottleneck.** A fine-tuned plate detector is essential; without one ALPR will miss most plates in real traffic.
 - FastPlateOCR still struggles with motion blur, glare, and low-light plates — good camera placement helps more than model tweaking.
 - Whole-frame OCR fallback (no YOLO) produces many false positives and is not suitable for moving vehicles.
-- `live_matcher.py` (background alert on known plates) is still a stub pending real-world tuning.
+- Live known-plate alerting is now performed inside `web/app.py`'s `_live_alpr_loop` (not a separate matcher module).
 
 ### Planned additions
 

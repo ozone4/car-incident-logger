@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Trip {{ trip.id }} — Car Incident Logger{% endblock %}
+
+{% block content %}
+<h1>Trip {{ trip.id }}</h1>
+<p><a href="{{ url_for('trips_page') }}">← All trips</a></p>
+
+<div class="info-grid">
+  <div><span class="label">Started</span> <span class="mono">{{ fmt_ts(trip.started_at) }}</span></div>
+  <div>
+    <span class="label">Ended</span>
+    <span class="mono">{% if trip.ended_at %}{{ fmt_ts(trip.ended_at) }}{% else %}<em>in progress</em>{% endif %}</span>
+  </div>
+  <div><span class="label">Duration</span> <span class="mono">{{ duration_label or "—" }}</span></div>
+  <div><span class="label">Breadcrumbs</span> <span class="mono">{{ points|length }}</span></div>
+  {% if bbox %}
+  <div>
+    <span class="label">View route</span>
+    <a href="https://www.openstreetmap.org/#map=14/{{ bbox.center_lat }}/{{ bbox.center_lon }}" target="_blank" rel="noreferrer" class="mono">OSM</a>
+  </div>
+  {% endif %}
+</div>
+
+{% if points %}
+<table>
+  <thead>
+    <tr>
+      <th>Time</th>
+      <th>Latitude</th>
+      <th>Longitude</th>
+      <th>Speed (km/h)</th>
+      <th>Heading</th>
+      <th>Altitude</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in points %}
+    <tr>
+      <td class="mono">{{ fmt_ts(p.timestamp) }}</td>
+      <td class="mono">{{ "%.5f"|format(p.lat) }}</td>
+      <td class="mono">{{ "%.5f"|format(p.lon) }}</td>
+      <td class="mono">{% if p.speed_kmh is not none %}{{ "%.0f"|format(p.speed_kmh) }}{% else %}—{% endif %}</td>
+      <td class="mono">{% if p.heading is not none %}{{ "%.0f"|format(p.heading) }}°{% else %}—{% endif %}</td>
+      <td class="mono">{% if p.altitude is not none %}{{ "%.0f"|format(p.altitude) }}m{% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No breadcrumbs recorded for this trip.</p>
+{% endif %}
+{% endblock %}

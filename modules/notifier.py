@@ -2,8 +2,13 @@
 notifier.py — Alert system for known-plate matches and system events.
 
 Supports:
-  • Console alerts (always available)
+  • Logger-routed alerts (always on; honors logging config in app.py / main.py)
   • Optional audio chime via playsound (requires: pip install playsound)
+
+The legacy `console_alerts` flag is accepted for backward compatibility but is
+now a no-op — every notification routes through `logger` so that systemd
+journal, the rotating file at `data/logs/system.log`, and any other handler
+configured at app startup all see the same events.
 """
 
 import logging
@@ -13,20 +18,13 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# ANSI colour codes for console output (no emoji)
-_RED = "\033[91m"
-_YELLOW = "\033[93m"
-_GREEN = "\033[92m"
-_RESET = "\033[0m"
-_BOLD = "\033[1m"
-
 
 class Notifier:
     def __init__(
         self,
         chime_enabled: bool = False,
         chime_file: str = "",
-        console_alerts: bool = True,
+        console_alerts: bool = True,  # kept for compat; routing is always via logger
     ):
         self.chime_enabled = chime_enabled
         self.chime_file = chime_file
@@ -45,10 +43,6 @@ class Notifier:
             inc = context.get("incident_count", "?")
             last = context.get("last_seen", "?")
             msg += f"  (seen {inc}x, last: {last})"
-
-        if self.console_alerts:
-            print(f"\n{_BOLD}{_RED}{msg}{_RESET}\n", flush=True)
-
         logger.warning(msg)
         self._play_chime()
 
@@ -61,33 +55,21 @@ class Notifier:
         if note:
             msg += f"  Note: {note!r}"
         msg += f"  → {incident_dir}"
-
-        if self.console_alerts:
-            print(f"{_GREEN}{msg}{_RESET}", flush=True)
-
         logger.info(msg)
 
     def notify_recording_started(self) -> None:
-        if self.console_alerts:
-            print(f"{_YELLOW}[REC] Recording started — hold button...{_RESET}", flush=True)
+        logger.info("[REC] Recording started — hold button...")
 
     def notify_recording_stopped(self) -> None:
-        if self.console_alerts:
-            print(f"{_YELLOW}[REC] Recording stopped — processing...{_RESET}", flush=True)
+        logger.info("[REC] Recording stopped — processing...")
 
     def notify_transcription(self, transcript: str) -> None:
-        if self.console_alerts:
-            print(f"[TRANSCRIPT] {transcript!r}", flush=True)
         logger.info("Transcript: %r", transcript)
 
     def notify_error(self, message: str) -> None:
-        if self.console_alerts:
-            print(f"{_RED}[ERROR] {message}{_RESET}", flush=True)
         logger.error(message)
 
     def notify_info(self, message: str) -> None:
-        if self.console_alerts:
-            print(f"[INFO] {message}", flush=True)
         logger.info(message)
 
     # ── Chime ─────────────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ Options:
 """
 
 import argparse
+import atexit
 import json
 import logging
 import sys
@@ -103,6 +104,12 @@ _last_recovery_result: Optional[dict] = None
 # ── GPS + trip state ─────────────────────────────────────────────────────────
 _gps_reader: Optional[GPSReader] = None
 _trip_tracker: Optional[TripTracker] = None
+
+# ── Runtime audio mute (preserves user intent across requests within a process)
+# Initialized from config.audio.enabled at first read; resets to config on restart.
+# LoopRecorder/DashcamRecorder do not capture audio yet — this flag is wired so
+# that when audio capture lands, the mute toggle already gates it end-to-end.
+_audio_enabled: Optional[bool] = None
 
 
 # ── Config helpers ────────────────────────────────────────────────────────────
@@ -873,6 +880,92 @@ def alpr_status_api():
     return jsonify(info)
 
 
+def _trip_duration_label(started_at: str, ended_at: Optional[str]) -> Optional[str]:
+    """Compute a human-readable duration string from ISO timestamps."""
+    if not started_at:
+        return None
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        start = _dt.fromisoformat(started_at.replace("Z", "+00:00"))
+        end = _dt.fromisoformat(ended_at.replace("Z", "+00:00")) if ended_at else _dt.now(_tz.utc)
+        secs = max(0, int((end - start).total_seconds()))
+        h, rem = divmod(secs, 3600)
+        m, s = divmod(rem, 60)
+        if h:
+            return f"{h}h {m:02d}m"
+        if m:
+            return f"{m}m {s:02d}s"
+        return f"{s}s"
+    except Exception:
+        return None
+
+
+@app.route("/trips")
+def trips_page():
+    """List recent trips."""
+    db = _get_db()
+    if db is None:
+        return render_template("trips.html", trips=[])
+    trips = db.get_recent_trips(limit=50)
+    for t in trips:
+        t["duration_label"] = _trip_duration_label(t.get("started_at"), t.get("ended_at"))
+    return render_template("trips.html", trips=trips)
+
+
+@app.route("/trip/<int:trip_id>")
+def trip_detail(trip_id):
+    """Show a single trip with its breadcrumb path."""
+    db = _get_db()
+    if db is None:
+        return "Database unavailable", 503
+    trip = db.get_trip(trip_id)
+    if trip is None:
+        return "Trip not found", 404
+    points = db.get_trip_points(trip_id, limit=2000)
+    points.sort(key=lambda p: p.get("timestamp") or "")  # chronological for display
+    duration_label = _trip_duration_label(trip.get("started_at"), trip.get("ended_at"))
+    bbox = None
+    if points:
+        lats = [p["lat"] for p in points]
+        lons = [p["lon"] for p in points]
+        bbox = {
+            "center_lat": (min(lats) + max(lats)) / 2,
+            "center_lon": (min(lons) + max(lons)) / 2,
+        }
+    return render_template(
+        "trip_detail.html",
+        trip=trip,
+        points=points,
+        duration_label=duration_label,
+        bbox=bbox,
+    )
+
+
+@app.route("/sightings/<plate>")
+def sighting_detail(plate):
+    """Render the per-plate sighting timeline + snapshot gallery + map links."""
+    plate = plate.upper().strip()
+    db = _get_db()
+    if db is None:
+        return render_template(
+            "sighting_detail.html",
+            plate=plate,
+            sightings=[],
+            snapshots=[],
+            history=None,
+        )
+    sightings = db.get_sightings_for_plate(plate, limit=200)
+    history = db.get_plate_history(plate)
+    snapshots = [s for s in sightings if s.get("snapshot_path")][:12]
+    return render_template(
+        "sighting_detail.html",
+        plate=plate,
+        sightings=sightings,
+        snapshots=snapshots,
+        history=history,
+    )
+
+
 @app.route("/sightings/image")
 def sightings_image():
     """Serve a saved plate crop JPEG by its absolute path (read-only, within data dir)."""
@@ -983,6 +1076,32 @@ def recording_status_api():
     if _loop_recorder is None:
         return jsonify({"recording": False, "enabled": _load_config().recording_enabled})
     return jsonify(_loop_recorder.status())
+
+
+def _get_audio_enabled() -> bool:
+    """Return current audio-enabled flag (lazy init from config on first call)."""
+    global _audio_enabled
+    if _audio_enabled is None:
+        try:
+            _audio_enabled = _load_config().audio_enabled
+        except Exception:
+            _audio_enabled = True
+    return bool(_audio_enabled)
+
+
+@app.route("/audio/status")
+def audio_status_api():
+    """Report whether audio recording is currently enabled."""
+    return jsonify({"enabled": _get_audio_enabled()})
+
+
+@app.route("/audio/toggle", methods=["POST"])
+def audio_toggle_api():
+    """Flip the runtime audio-enabled flag and return its new value."""
+    global _audio_enabled
+    _audio_enabled = not _get_audio_enabled()
+    logger.info("Audio recording %s", "enabled" if _audio_enabled else "muted")
+    return jsonify({"enabled": _audio_enabled})
 
 
 # ── Dashcam routes ───────────────────────────────────────────────────────────
@@ -1397,6 +1516,39 @@ def recordings_serve_video(rec_id):
     return "Not found", 404
 
 
+@app.route("/recordings/lock/current", methods=["POST"])
+def recordings_lock_current():
+    """Lock the segment that is being recorded right now.
+
+    Convenience endpoint for the dashboard 'Lock segment' button — the client
+    doesn't have to know the segment's ID.
+    """
+    if _loop_recorder is None:
+        return jsonify({"ok": False, "error": "Recorder not running"}), 409
+    seg_path = _loop_recorder.status().get("current_segment")
+    if not seg_path:
+        return jsonify({"ok": False, "error": "No segment in progress"}), 409
+
+    cfg = _load_config()
+    recording_path = Path(cfg.recording_output_path).resolve()
+    try:
+        rel = Path(seg_path).resolve().relative_to(recording_path).with_suffix("")
+    except ValueError:
+        return jsonify({"ok": False, "error": "Segment outside recording dir"}), 500
+
+    json_path = (recording_path / f"{rel}.json")
+    if not json_path.exists():
+        return jsonify({"ok": False, "error": "Sidecar not found"}), 404
+    try:
+        meta = json.loads(json_path.read_text())
+        meta["locked"] = True
+        meta["locked_reason"] = "user_lock"
+        json_path.write_text(json.dumps(meta, indent=2))
+    except (json.JSONDecodeError, OSError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True, "locked": True, "id": str(rel)})
+
+
 @app.route("/recordings/lock", methods=["POST"])
 def recordings_lock():
     """Set locked=true on a recording sidecar."""
@@ -1584,6 +1736,21 @@ def _start_gps_and_trip() -> None:
                 _trip_tracker = None
 
 
+def _shutdown_services() -> None:
+    """Gracefully stop background services on app exit (closes the open trip cleanly)."""
+    global _trip_tracker, _gps_reader
+    if _trip_tracker is not None:
+        try:
+            _trip_tracker.stop()
+        except Exception as exc:
+            logger.warning("TripTracker shutdown failed: %s", exc)
+    if _gps_reader is not None:
+        try:
+            _gps_reader.stop()
+        except Exception as exc:
+            logger.warning("GPSReader shutdown failed: %s", exc)
+
+
 def _auto_start_dashcam_services() -> None:
     """Start dashcam services for normal in-car operation.
 
@@ -1637,6 +1804,7 @@ if __name__ == "__main__":
     logger.info("Web UI starting at http://%s:%d/", args.host, args.port)
     if not args.debug:
         _auto_start_dashcam_services()
+        atexit.register(_shutdown_services)
     else:
         logger.info("Debug mode enabled; skipping auto-start to avoid Flask reloader duplicate camera opens")
     app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)

@@ -11,6 +11,7 @@ buffer:
   duration_seconds: 45  # rolling buffer length
 
 audio:
+  enabled: true       # mute toggle: when false, no audio is recorded into loop segments / dashcam clips
   device_index: null  # null = system default
   sample_rate: 16000
   channels: 1

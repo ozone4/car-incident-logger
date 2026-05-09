@@ -8,7 +8,7 @@ Event flow
 3. Start camera capture thread
 4. Start rolling buffer thread
 5. Start button listener
-6. If alpr.enabled → init ALPRRunner + start LiveMatcher
+6. If alpr.enabled → init ALPRRunner (live matching is handled by web/app.py's _live_alpr_loop)
 7. Main loop: idle until KeyboardInterrupt
    • Button press  → start audio recording
    • Button release → stop audio + transcribe + parse + save + DB update
@@ -34,7 +34,6 @@ from modules.phonetic_plate_parser import parse_plate_from_transcript
 from modules.incident_saver import IncidentSaver
 from modules.plate_database import PlateDatabase
 from modules.alpr_runner import ALPRRunner
-from modules.live_matcher import LiveMatcher
 from modules.notifier import Notifier
 
 logger = logging.getLogger(__name__)
@@ -272,12 +271,6 @@ def main() -> int:
             "yolo_model_path": config.alpr_yolo_model_path,
         }
     )
-    live_matcher = LiveMatcher(
-        alpr_runner=alpr,
-        plate_database=plate_db,
-        notifier=notifier,
-        scan_interval=config.alpr_scan_interval,
-    )
 
     # ── Start subsystems ──────────────────────────────────────────────────────
     notifier.notify_info("Starting camera capture...")
@@ -301,7 +294,6 @@ def main() -> int:
     if config.alpr_enabled:
         notifier.notify_info("Initializing ALPR (Phase 2)...")
         alpr.initialize()
-        live_matcher.start(rolling_buf)
     else:
         logger.info("ALPR disabled (alpr.enabled = false in config)")
 
@@ -335,7 +327,6 @@ def main() -> int:
     notifier.notify_info("Shutting down — please wait...")
 
     button.stop()
-    live_matcher.stop()
     rolling_buf.stop()
     camera.stop()
     plate_db.close()

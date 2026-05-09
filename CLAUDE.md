@@ -32,10 +32,9 @@ main.py / web/app.py              Orchestrator + Flask dashboard/API
   ├── RollingBuffer               Consumes frame queue into pre-roll buffer
   ├── DashcamRecorder             Saves incident clips + metadata from rolling buffer
   ├── ALPRRunner                  YOLO/FastPlateOCR plate recognition with fallback modes
-  ├── LiveMatcher                 Background ALPR scanning / known-plate matching
   ├── PlateDatabase               SQLite with incidents/sightings/known vehicles
-  ├── GPSReader                   GPS state from gpsd; should gain serial NMEA fallback
-  ├── TripTracker                 Planned: samples GPS into trips/breadcrumbs
+  ├── GPSReader                   GPS state from gpsd (with serial NMEA fallback planned)
+  ├── TripTracker                 Samples GPS into trips/breadcrumbs (started by web/app.py)
   ├── Linux appliance watcher     AC loss grace period, clean stop/sync/suspend/resume
   └── Web dashboard               iPad-friendly touch UI served locally over Lenovo AP
 ```

@@ -4,6 +4,10 @@ loop_recorder.py — Continuous loop recording to disk in segments.
 Runs as a daemon thread consuming frames from CameraCapture, writing
 fixed-duration video segments with sidecar JSON metadata.  Applies an
 optional timestamp overlay at encode time (so ALPR sees clean frames).
+
+Currently records VIDEO ONLY. When audio capture is added (planned), it must
+respect the `audio.enabled` config flag and the `/audio/toggle` runtime
+endpoint exposed by web/app.py — those wires are already in place.
 """
 
 import json
