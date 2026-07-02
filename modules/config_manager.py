@@ -178,6 +178,14 @@ class ConfigManager:
         return int(self.get("alpr", "sighting_history_limit", default=30))
 
     @property
+    def alpr_min_sightings_to_persist(self) -> int:
+        return int(self.get("alpr", "min_sightings_to_persist", default=2))
+
+    @property
+    def alpr_min_plate_length(self) -> int:
+        return int(self.get("alpr", "min_plate_length", default=5))
+
+    @property
     def alpr_max_consecutive_failures(self) -> int:
         return int(self.get("alpr", "max_consecutive_failures", default=5))
 

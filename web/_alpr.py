@@ -55,6 +55,7 @@ _state: dict = {
 SIGHTING_ACTIVE_TIMEOUT_SECONDS = 5.0
 SIGHTING_HISTORY_LIMIT = 30
 MAX_CONSECUTIVE_FAILURES = 5
+MIN_SIGHTINGS_TO_PERSIST = 2
 
 
 # ── Injected dependencies (set via configure()) ──────────────────────────────
@@ -137,6 +138,7 @@ def alpr_runner_config() -> dict:
         "vehicle_imgsz": cfg.alpr_vehicle_imgsz,
         "ocr_fallback_when_no_detections": cfg.alpr_ocr_fallback_when_no_detections,
         "fullframe_ocr_confidence_threshold": cfg.alpr_fullframe_ocr_confidence_threshold,
+        "min_plate_length": cfg.alpr_min_plate_length,
     }
 
 
@@ -180,12 +182,13 @@ def stop() -> dict:
 
 # ── Internal: tuning, helpers, snapshots ────────────────────────────────────
 def _refresh_tuning() -> None:
-    global SIGHTING_ACTIVE_TIMEOUT_SECONDS, SIGHTING_HISTORY_LIMIT, MAX_CONSECUTIVE_FAILURES
+    global SIGHTING_ACTIVE_TIMEOUT_SECONDS, SIGHTING_HISTORY_LIMIT, MAX_CONSECUTIVE_FAILURES, MIN_SIGHTINGS_TO_PERSIST
     try:
         cfg = _Ctx.load_config()
         SIGHTING_ACTIVE_TIMEOUT_SECONDS = float(cfg.alpr_sighting_active_timeout)
         SIGHTING_HISTORY_LIMIT = int(cfg.alpr_sighting_history_limit)
         MAX_CONSECUTIVE_FAILURES = int(cfg.alpr_max_consecutive_failures)
+        MIN_SIGHTINGS_TO_PERSIST = int(cfg.alpr_min_sightings_to_persist)
     except Exception as exc:
         logger.warning("Could not read ALPR tuning from config (using defaults): %s", exc)
 
@@ -243,7 +246,7 @@ def _new_sighting(plate: str, det: dict, now: float) -> dict:
         "active": True,
         "history": history,
         "snapshot_path": None,
-        "_needs_snapshot": True,
+        "_needs_snapshot": MIN_SIGHTINGS_TO_PERSIST <= 1,
     }
 
 
@@ -281,11 +284,17 @@ def _update_plate_sightings(detections: list[dict], now: float):
     """
     active: dict = _state.setdefault("active_sightings", {})
     recent: list = _state.setdefault("recent_sightings", [])
+    by_plate: dict[str, dict] = {}
 
     for det in detections:
         plate = det.get("plate")
         if not plate:
             continue
+        previous = by_plate.get(plate)
+        if previous is None or float(det.get("confidence", 0.0)) > float(previous.get("confidence", 0.0)):
+            by_plate[plate] = det
+
+    for plate, det in by_plate.items():
         sighting = active.get(plate)
         if sighting is None:
             sighting = _new_sighting(plate, det, now)
@@ -300,6 +309,9 @@ def _update_plate_sightings(detections: list[dict], now: float):
             )
             if new_best > float(sighting.get("best_confidence", 0.0)):
                 sighting["best_confidence"] = new_best
+                if int(sighting.get("seen_count", 0)) >= MIN_SIGHTINGS_TO_PERSIST:
+                    sighting["_needs_snapshot"] = True
+            elif int(sighting.get("seen_count", 0)) == MIN_SIGHTINGS_TO_PERSIST:
                 sighting["_needs_snapshot"] = True
             sighting["raw_text"] = (det.get("raw_text") or sighting.get("raw_text") or "").strip()
             sighting["bbox"] = det.get("bbox") or sighting.get("bbox")

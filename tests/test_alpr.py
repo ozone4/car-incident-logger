@@ -118,8 +118,11 @@ class TestValidatePlateCandidate:
     def test_valid_bc_6char(self):
         assert validate_plate_candidate("ABC123")
 
-    def test_valid_short_4char(self):
-        assert validate_plate_candidate("AB12")
+    def test_four_char_rejected_by_default_minimum(self):
+        assert not validate_plate_candidate("AB12")
+
+    def test_four_char_allowed_when_min_length_configured(self):
+        assert validate_plate_candidate("AB12", min_length=4)
 
     def test_valid_8char(self):
         assert validate_plate_candidate("ABCD1234")
@@ -147,7 +150,10 @@ class TestValidatePlateCandidate:
         assert not validate_plate_candidate("abc123")
 
     def test_two_char_minimum(self):
-        assert validate_plate_candidate("A1")
+        assert not validate_plate_candidate("A1")
+
+    def test_short_two_char_ocr_junk_rejected(self):
+        assert not validate_plate_candidate("B8")
 
     def test_nine_char_maximum(self):
         assert validate_plate_candidate("ABC123456")
@@ -460,6 +466,80 @@ class TestMultiFrameVoter:
         for i in range(10):
             voter.add_frame([{"plate": f"PL{i:04d}", "confidence": 0.5}])
         assert voter.candidate_count <= 3
+
+    def test_max_candidates_evicts_weak_candidate_for_repeated_new_plate(self):
+        voter = MultiFrameVoter(min_votes=2, max_candidates=3)
+        voter.add_frame([{"plate": "OLD001", "confidence": 0.4}])
+        voter.add_frame([{"plate": "OLD002", "confidence": 0.4}])
+        voter.add_frame([{"plate": "OLD003", "confidence": 0.4}])
+
+        voter.add_frame([{"plate": "NEW999", "confidence": 0.95}])
+        voter.add_frame([{"plate": "NEW999", "confidence": 0.95}])
+
+        best = voter.get_best()
+        assert best is not None
+        assert best["plate"] == "NEW999"
+
+    def test_pending_overflow_candidates_stay_bounded(self):
+        voter = MultiFrameVoter(min_votes=2, max_candidates=3)
+        voter.add_frame([
+            {"plate": "OLD001", "confidence": 0.4},
+            {"plate": "OLD002", "confidence": 0.4},
+            {"plate": "OLD003", "confidence": 0.4},
+        ])
+
+        for i in range(50):
+            voter.add_frame([{"plate": f"NOISE{i:03d}", "confidence": 0.3}])
+
+        assert voter.candidate_count <= 3
+        assert voter.pending_candidate_count <= 3
+
+    def test_min_votes_one_still_requires_repeated_overflow_plate(self):
+        voter = MultiFrameVoter(min_votes=1, max_candidates=1)
+        voter.add_frame([{"plate": "OLD001", "confidence": 0.4}])
+
+        voter.add_frame([{"plate": "NEW999", "confidence": 0.95}])
+        best = voter.get_best()
+        assert best is not None
+        assert best["plate"] == "OLD001"
+
+        voter.add_frame([{"plate": "NEW999", "confidence": 0.95}])
+        best = voter.get_best()
+        assert best is not None
+        assert best["plate"] == "NEW999"
+
+    def test_duplicate_plate_in_one_frame_counts_as_one_vote(self):
+        voter = MultiFrameVoter(min_votes=2)
+        voter.add_frame([
+            {"plate": "ABC123", "confidence": 0.7},
+            {"plate": "ABC123", "confidence": 0.95},
+        ])
+
+        assert voter.get_best() is None
+
+        voter.add_frame([{"plate": "ABC123", "confidence": 0.8}])
+        best = voter.get_best()
+        assert best is not None
+        assert best["plate"] == "ABC123"
+        assert best["votes"] == 2
+        assert abs(best["avg_confidence"] - 0.875) < 0.001
+
+    def test_duplicate_overflow_plate_in_one_frame_does_not_promote(self):
+        voter = MultiFrameVoter(min_votes=1, max_candidates=1)
+        voter.add_frame([{"plate": "OLD001", "confidence": 0.4}])
+
+        voter.add_frame([
+            {"plate": "NEW999", "confidence": 0.7},
+            {"plate": "NEW999", "confidence": 0.95},
+        ])
+        best = voter.get_best()
+        assert best is not None
+        assert best["plate"] == "OLD001"
+
+        voter.add_frame([{"plate": "NEW999", "confidence": 0.8}])
+        best = voter.get_best()
+        assert best is not None
+        assert best["plate"] == "NEW999"
 
     def test_avg_confidence_in_result(self):
         voter = MultiFrameVoter(min_votes=2)

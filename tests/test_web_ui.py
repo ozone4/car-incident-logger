@@ -232,6 +232,47 @@ def test_plate_sightings_expire_to_recent_history():
     assert rows[0]["status"] == "gone"
 
 
+def test_plate_sightings_wait_for_confirmation_before_snapshot():
+    from web import _alpr
+
+    with _alpr._lock:
+        _alpr._state["active_sightings"] = {}
+        _alpr._state["recent_sightings"] = []
+        _alpr._update_plate_sightings(
+            [{"plate": "ABC123", "confidence": 0.80, "raw_text": "ABC123"}],
+            100.0,
+        )
+        first = _alpr._state["active_sightings"]["ABC123"]
+        assert first["seen_count"] == 1
+        assert first.get("_needs_snapshot") is False
+
+        _alpr._update_plate_sightings(
+            [{"plate": "ABC123", "confidence": 0.79, "raw_text": "ABC123"}],
+            101.0,
+        )
+        second = _alpr._state["active_sightings"]["ABC123"]
+        assert second["seen_count"] == 2
+        assert second.get("_needs_snapshot") is True
+
+
+def test_plate_sightings_deduplicate_same_frame_before_confirmation():
+    from web import _alpr
+
+    with _alpr._lock:
+        _alpr._state["active_sightings"] = {}
+        _alpr._state["recent_sightings"] = []
+        _alpr._update_plate_sightings(
+            [
+                {"plate": "ABC123", "confidence": 0.80, "raw_text": "ABC123"},
+                {"plate": "ABC123", "confidence": 0.82, "raw_text": "ABC123"},
+            ],
+            100.0,
+        )
+        sighting = _alpr._state["active_sightings"]["ABC123"]
+        assert sighting["seen_count"] == 1
+        assert sighting.get("_needs_snapshot") is False
+
+
 # ── Health + Storage route tests ─────────────────────────────────────────────
 
 def test_health_endpoint_returns_json(client):

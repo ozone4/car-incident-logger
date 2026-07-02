@@ -67,8 +67,9 @@ _LETTER_AS_DIGIT: dict[str, str] = {
     "G": "6",
 }
 
-# Valid plate: 2–9 chars, alphanumeric only
-_PLATE_RE = re.compile(r"^[A-Z0-9]{2,9}$")
+# Valid plate: 5–9 chars by default, alphanumeric only.
+# Shorter OCR strings are common false positives from badges/bumper text.
+_PLATE_RE = re.compile(r"^[A-Z0-9]+$")
 
 
 def normalize_plate(raw: str) -> str:
@@ -117,13 +118,15 @@ def apply_ocr_corrections(raw: str, plate_format: str = "auto") -> str:
     return "".join(result)
 
 
-def validate_plate_candidate(plate: str) -> bool:
+def validate_plate_candidate(plate: str, min_length: int = 5) -> bool:
     """
     Return True if plate looks like a valid NA plate candidate:
-      - 2–9 alphanumeric characters only
+      - min_length–9 alphanumeric characters only (default min_length=5)
       - Not all the same character (e.g. "AAAAAA" rejected)
     """
     if not plate or not _PLATE_RE.match(plate):
+        return False
+    if len(plate) < max(1, min_length) or len(plate) > 9:
         return False
     if len(set(plate)) == 1:
         return False
@@ -485,6 +488,7 @@ class ALPRRunner:
     ) -> None:
         cfg = config or {}
         self._conf_threshold = float(cfg.get("confidence_threshold", 0.5))
+        self._min_plate_length = int(cfg.get("min_plate_length", 5))
         self._yolo_conf_threshold = float(cfg.get("yolo_confidence_threshold", 0.1))
         self._yolo_imgsz = int(cfg.get("yolo_imgsz", 640))
         self._vehicle_fallback_to_fullframe = bool(cfg.get("vehicle_fallback_to_fullframe", True))
@@ -669,7 +673,7 @@ class ALPRRunner:
         results = []
         for raw_text, ocr_conf in texts:
             plate, corrected = _normalize_and_correct(raw_text)
-            valid = validate_plate_candidate(plate)
+            valid = validate_plate_candidate(plate, min_length=self._min_plate_length)
             # Normalize detector confidence against the configured threshold so that
             # low-confidence YOLO boxes on small/distant plates don't dominate.
             det_score = min(det_conf / max(self._yolo_conf_threshold, 0.01), 1.0)
@@ -755,7 +759,7 @@ class ALPRRunner:
                 texts = self._recognizer.recognize(plate_region)
                 for raw_text, ocr_conf in texts:
                     plate, corrected = _normalize_and_correct(raw_text)
-                    if not validate_plate_candidate(plate):
+                    if not validate_plate_candidate(plate, min_length=self._min_plate_length):
                         continue
                     if ocr_conf < threshold:
                         continue

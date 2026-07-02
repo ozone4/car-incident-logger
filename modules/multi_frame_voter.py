@@ -35,6 +35,7 @@ class MultiFrameVoter:
         self._min_votes = min_votes
         self._max_candidates = max_candidates
         self._votes: dict[str, list[float]] = {}  # plate → [confidence, ...]
+        self._pending: dict[str, list[float]] = {}  # overflow plate → [confidence, ...]
         self._frame_count = 0
 
     # ------------------------------------------------------------------
@@ -50,14 +51,24 @@ class MultiFrameVoter:
           "confidence"  float  (0.0–1.0)
         """
         self._frame_count += 1
+        by_plate: dict[str, float] = {}
         for det in detections:
             plate = det.get("plate", "")
             if not plate:
                 continue
             conf = float(det.get("confidence", 0.0))
+            if conf > by_plate.get(plate, -1.0):
+                by_plate[plate] = conf
+
+        for plate, conf in by_plate.items():
             if plate not in self._votes:
                 if len(self._votes) >= self._max_candidates:
-                    continue  # ignore new candidates when at capacity
+                    pending = self._pending.setdefault(plate, [])
+                    pending.append(conf)
+                    self._trim_pending_candidates()
+                    if len(pending) >= max(2, self._min_votes):
+                        self._promote_pending_candidate(plate)
+                    continue
                 self._votes[plate] = []
             self._votes[plate].append(conf)
 
@@ -91,6 +102,7 @@ class MultiFrameVoter:
     def reset(self) -> None:
         """Clear all accumulated state."""
         self._votes.clear()
+        self._pending.clear()
         self._frame_count = 0
 
     @property
@@ -102,6 +114,11 @@ class MultiFrameVoter:
     def candidate_count(self) -> int:
         """Number of distinct plate strings currently tracked."""
         return len(self._votes)
+
+    @property
+    def pending_candidate_count(self) -> int:
+        """Number of overflow plate strings awaiting repeat confirmation."""
+        return len(self._pending)
 
     # ------------------------------------------------------------------
     # Internal
@@ -127,3 +144,31 @@ class MultiFrameVoter:
                 }
             )
         return sorted(results, key=lambda x: x["confidence"], reverse=True)
+
+    def _promote_pending_candidate(self, plate: str) -> None:
+        """Evict the weakest tracked plate and promote a repeated overflow candidate."""
+        pending = self._pending.pop(plate, [])
+        if not pending:
+            return
+        if len(self._votes) >= self._max_candidates and self._votes:
+            weakest = min(
+                self._votes,
+                key=lambda p: (
+                    len(self._votes[p]),
+                    sum(self._votes[p]) / max(1, len(self._votes[p])),
+                ),
+            )
+            self._votes.pop(weakest, None)
+        self._votes[plate] = pending
+
+    def _trim_pending_candidates(self) -> None:
+        """Keep overflow candidates bounded by evicting weakest one-off noise."""
+        while len(self._pending) > self._max_candidates:
+            weakest = min(
+                self._pending,
+                key=lambda p: (
+                    len(self._pending[p]),
+                    sum(self._pending[p]) / max(1, len(self._pending[p])),
+                ),
+            )
+            self._pending.pop(weakest, None)

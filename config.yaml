@@ -49,6 +49,8 @@ alpr:
   scan_interval_seconds: 1.0
   sighting_active_timeout_seconds: 5.0  # treat plate as "gone" after this many seconds without re-detection
   sighting_history_limit: 30            # max recent sightings retained in memory after they expire
+  min_sightings_to_persist: 2           # require repeat detection before saving crop/DB sighting
+  min_plate_length: 5                   # reject short OCR junk like badges/trim labels (e.g. B8)
   max_consecutive_failures: 5           # halt the live ALPR loop after this many run_on_frame errors in a row
   # Path to a YOLO plate-detection model (.pt file). Requires ultralytics installed.
   # Download a plate-specific model (e.g. keremberke/license-plate-object-detection)
