@@ -430,6 +430,44 @@ class TestALPRRunnerNoDeps:
         assert results[0]["plate"] == "634XSG"
         assert results[0]["source"] == "vehicle+fastocr_heuristic"
 
+    def test_detector_confidence_changes_combined_confidence(self):
+        """Detector confidence should not be flattened to a constant above threshold."""
+        from modules.alpr_runner import _BaseDetector, _BaseRecognizer
+
+        class _StubDetector(_BaseDetector):
+            def initialize(self):
+                self.status = "ready"
+                return True
+
+            def detect(self, frame):
+                return [
+                    {"bbox": [0, 0, 200, 60], "confidence": 0.12},
+                    {"bbox": [220, 0, 420, 60], "confidence": 0.92},
+                ]
+
+        class _StubRecognizer(_BaseRecognizer):
+            def initialize(self):
+                self.status = "ready"
+                return True
+
+            def recognize(self, image):
+                return [("ABC123", 0.78)]
+
+        runner = ALPRRunner(
+            {"confidence_threshold": 0.3, "yolo_confidence_threshold": 0.01},
+            detector=_StubDetector(),
+            recognizer=_StubRecognizer(),
+        )
+        runner.initialize()
+        frame = np.zeros((200, 640, 3), dtype=np.uint8)
+        results = runner.run_on_frame(frame)
+
+        assert len(results) == 2
+        confidences = [r["confidence"] for r in results]
+        assert confidences[0] < confidences[1]
+        assert confidences[0] == round(0.78 * 0.8 + 0.12 * 0.2, 3)
+        assert confidences[1] == round(0.78 * 0.8 + 0.92 * 0.2, 3)
+
     def test_detection_dict_format(self):
         """Verify returned dicts have expected keys."""
         from modules.alpr_runner import _BaseDetector, _BaseRecognizer

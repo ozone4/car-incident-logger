@@ -686,9 +686,10 @@ class ALPRRunner:
         for raw_text, ocr_conf in texts:
             plate, corrected = _normalize_and_correct(raw_text)
             valid = validate_plate_candidate(plate, min_length=self._min_plate_length)
-            # Normalize detector confidence against the configured threshold so that
-            # low-confidence YOLO boxes on small/distant plates don't dominate.
-            det_score = min(det_conf / max(self._yolo_conf_threshold, 0.01), 1.0)
+            # Preserve YOLO's actual confidence contribution.  The configured
+            # yolo_confidence_threshold gates boxes before OCR; it should not
+            # rescale every accepted low-threshold box to a perfect detector score.
+            det_score = max(0.0, min(float(det_conf), 1.0))
             combined = ocr_conf * 0.8 + det_score * 0.2
             debug = {
                 "stage": "candidate",
