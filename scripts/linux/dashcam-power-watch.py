@@ -21,9 +21,10 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 
@@ -80,6 +81,146 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+@dataclass
+class PowerWatchRuntime:
+    battery_since: float | None = None
+    battery_since_wall: str | None = None
+    last_state: str | None = None
+    last_suspend_reason: str | None = None
+    last_suspend_at: str | None = None
+    last_resume_at: str | None = None
+
+
+@dataclass(frozen=True)
+class PowerTickDecision:
+    action: Literal["none", "suspend"]
+    reason: str
+    state_payload: dict[str, Any]
+
+
+def _ac_state_payload(
+    status: dict[str, Any],
+    runtime: PowerWatchRuntime,
+    grace_seconds: float,
+    now_wall: str,
+) -> dict[str, Any]:
+    return {
+        "updated_at": now_wall,
+        "state": "ac" if status.get("on_ac") is True else "unknown",
+        "battery_since": None,
+        "battery_elapsed_seconds": 0,
+        "grace_seconds": grace_seconds,
+        "grace_remaining_seconds": grace_seconds,
+        "last_suspend_reason": runtime.last_suspend_reason,
+        "last_suspend_at": runtime.last_suspend_at,
+        "last_resume_at": runtime.last_resume_at,
+        "power": status,
+    }
+
+
+def _battery_state_payload(
+    status: dict[str, Any],
+    runtime: PowerWatchRuntime,
+    grace_seconds: float,
+    now_monotonic: float,
+    now_wall: str,
+    *,
+    suspending: bool,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    elapsed = now_monotonic - runtime.battery_since if runtime.battery_since is not None else 0
+    return {
+        "updated_at": now_wall,
+        "state": "suspending" if suspending else "battery",
+        "battery_since": runtime.battery_since_wall,
+        "battery_elapsed_seconds": round(elapsed, 1),
+        "grace_seconds": grace_seconds,
+        "grace_remaining_seconds": 0 if suspending else max(0, round(grace_seconds - elapsed, 1)),
+        "last_suspend_reason": reason if suspending else runtime.last_suspend_reason,
+        "last_suspend_at": runtime.last_suspend_at,
+        "last_resume_at": runtime.last_resume_at,
+        "power": status,
+    }
+
+
+def should_suspend(
+    status: dict[str, Any],
+    battery_since: float | None,
+    grace_seconds: float,
+    critical_percent: int,
+    *,
+    now_monotonic: float | None = None,
+) -> tuple[bool, str]:
+    if status.get("on_ac") is not False:
+        return False, "not_on_battery"
+
+    pct = status.get("battery_percent")
+    if isinstance(pct, int) and pct <= critical_percent:
+        return True, f"critical_battery_{pct}%"
+
+    monotonic_now = time.monotonic() if now_monotonic is None else now_monotonic
+    if battery_since is not None and (monotonic_now - battery_since) >= grace_seconds:
+        return True, f"battery_grace_elapsed_{int(grace_seconds)}s"
+
+    return False, "within_grace"
+
+
+def evaluate_power_tick(
+    status: dict[str, Any],
+    runtime: PowerWatchRuntime,
+    grace_seconds: float,
+    critical_percent: int,
+    now_monotonic: float,
+    now_wall: str,
+) -> PowerTickDecision:
+    """Evaluate one watcher loop without side effects.
+
+    Mutates runtime timers/last suspend metadata, but does not write files,
+    call HTTP endpoints, run sync, or run suspend. This keeps power-loss
+    behavior testable without risking the host running the tests.
+    """
+    if status.get("on_ac") is False:
+        if runtime.battery_since is None:
+            runtime.battery_since = now_monotonic
+            runtime.battery_since_wall = now_wall
+
+        suspend, reason = should_suspend(
+            status,
+            runtime.battery_since,
+            grace_seconds,
+            critical_percent,
+            now_monotonic=now_monotonic,
+        )
+        if suspend:
+            runtime.last_suspend_reason = reason
+            runtime.last_suspend_at = now_wall
+            payload = _battery_state_payload(
+                status,
+                runtime,
+                grace_seconds,
+                now_monotonic,
+                now_wall,
+                suspending=True,
+                reason=reason,
+            )
+            return PowerTickDecision("suspend", reason, payload)
+
+        payload = _battery_state_payload(
+            status,
+            runtime,
+            grace_seconds,
+            now_monotonic,
+            now_wall,
+            suspending=False,
+        )
+        return PowerTickDecision("none", reason, payload)
+
+    runtime.battery_since = None
+    runtime.battery_since_wall = None
+    payload = _ac_state_payload(status, runtime, grace_seconds, now_wall)
+    return PowerTickDecision("none", "not_on_battery", payload)
+
+
 def write_state(state_file: Path, payload: dict[str, Any]) -> None:
     try:
         state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -102,26 +243,42 @@ def prepare_for_suspend(app_url: str, stop_before_suspend: bool) -> None:
     run_shell("sync", timeout=15)
 
 
+def handle_suspend_decision(
+    decision: PowerTickDecision,
+    runtime: PowerWatchRuntime,
+    app_url: str,
+    stop_before_suspend: bool,
+    restart_after_resume: bool,
+    suspend_command: str,
+    dry_run: bool,
+) -> None:
+    if decision.action != "suspend":
+        return
+
+    LOG.warning("Preparing to suspend: %s", decision.reason)
+    if dry_run:
+        LOG.warning("Dry-run enabled; skipping camera stop, sync, and suspend")
+        runtime.battery_since = None
+        runtime.battery_since_wall = None
+        return
+
+    prepare_for_suspend(app_url, stop_before_suspend)
+    rc = run_shell(suspend_command)
+    runtime.last_resume_at = utc_now()
+    LOG.info("Suspend command returned rc=%s; system has resumed or command failed", rc)
+    runtime.battery_since = None
+    runtime.battery_since_wall = None
+    time.sleep(5)
+    if restart_after_resume:
+        request_resume_start(app_url)
+
+
 def request_resume_start(app_url: str) -> None:
     ok, body = post_json(f"{app_url.rstrip('/')}/camera/start", timeout=8)
     if ok:
         LOG.info("Camera/recording start requested after resume")
     else:
         LOG.warning("Could not request camera start after resume: %s", body)
-
-
-def should_suspend(status: dict[str, Any], battery_since: float | None, grace_seconds: float, critical_percent: int) -> tuple[bool, str]:
-    if status.get("on_ac") is not False:
-        return False, "not_on_battery"
-
-    pct = status.get("battery_percent")
-    if isinstance(pct, int) and pct <= critical_percent:
-        return True, f"critical_battery_{pct}%"
-
-    if battery_since is not None and (time.monotonic() - battery_since) >= grace_seconds:
-        return True, f"battery_grace_elapsed_{int(grace_seconds)}s"
-
-    return False, "within_grace"
 
 
 def main() -> int:
@@ -145,12 +302,7 @@ def main() -> int:
     state_file = Path(str(cfg["state_file"]))
     if not state_file.is_absolute():
         state_file = PROJECT_ROOT / state_file
-    battery_since: float | None = None
-    battery_since_wall: str | None = None
-    last_state: str | None = None
-    last_suspend_reason: str | None = None
-    last_suspend_at: str | None = None
-    last_resume_at: str | None = None
+    runtime = PowerWatchRuntime()
 
     LOG.info("Power watcher started: grace=%ss critical=%s%% app=%s", int(grace), critical, app_url)
 
@@ -158,75 +310,33 @@ def main() -> int:
         status = read_power_status()
         state = str(status.get("state", "unknown"))
 
-        if state != last_state:
+        if state != runtime.last_state:
             LOG.info("Power state: %s battery=%s%%", state, status.get("battery_percent"))
-            last_state = state
+            runtime.last_state = state
 
-        if status.get("on_ac") is False:
-            if battery_since is None:
-                battery_since = time.monotonic()
-                battery_since_wall = utc_now()
-                LOG.warning("AC power lost; continuing for %s seconds before suspend", int(grace))
+        previous_battery_since = runtime.battery_since
+        decision = evaluate_power_tick(
+            status,
+            runtime,
+            grace,
+            critical,
+            now_monotonic=time.monotonic(),
+            now_wall=utc_now(),
+        )
+        if status.get("on_ac") is False and previous_battery_since is None:
+            LOG.warning("AC power lost; continuing for %s seconds before suspend", int(grace))
 
-            elapsed = time.monotonic() - battery_since if battery_since is not None else 0
-            write_state(state_file, {
-                "updated_at": utc_now(),
-                "state": "battery",
-                "battery_since": battery_since_wall,
-                "battery_elapsed_seconds": round(elapsed, 1),
-                "grace_seconds": grace,
-                "grace_remaining_seconds": max(0, round(grace - elapsed, 1)),
-                "last_suspend_reason": last_suspend_reason,
-                "last_suspend_at": last_suspend_at,
-                "last_resume_at": last_resume_at,
-                "power": status,
-            })
+        write_state(state_file, decision.state_payload)
 
-            suspend, reason = should_suspend(status, battery_since, grace, critical)
-            if suspend:
-                LOG.warning("Preparing to suspend: %s", reason)
-                prepare_for_suspend(app_url, bool(cfg["stop_before_suspend"]))
-                last_suspend_reason = reason
-                last_suspend_at = utc_now()
-                write_state(state_file, {
-                    "updated_at": utc_now(),
-                    "state": "suspending",
-                    "battery_since": battery_since_wall,
-                    "grace_seconds": grace,
-                    "grace_remaining_seconds": 0,
-                    "last_suspend_reason": last_suspend_reason,
-                    "last_suspend_at": last_suspend_at,
-                    "last_resume_at": last_resume_at,
-                    "power": status,
-                })
-                if args.dry_run:
-                    LOG.warning("Dry-run enabled; skipping suspend")
-                    battery_since = None
-                    battery_since_wall = None
-                else:
-                    rc = run_shell(suspend_command)
-                    last_resume_at = utc_now()
-                    LOG.info("Suspend command returned rc=%s; system has resumed or command failed", rc)
-                    battery_since = None
-                    battery_since_wall = None
-                    time.sleep(5)
-                    if bool(cfg["restart_after_resume"]):
-                        request_resume_start(app_url)
-        else:
-            battery_since = None
-            battery_since_wall = None
-            write_state(state_file, {
-                "updated_at": utc_now(),
-                "state": "ac" if status.get("on_ac") is True else "unknown",
-                "battery_since": None,
-                "battery_elapsed_seconds": 0,
-                "grace_seconds": grace,
-                "grace_remaining_seconds": grace,
-                "last_suspend_reason": last_suspend_reason,
-                "last_suspend_at": last_suspend_at,
-                "last_resume_at": last_resume_at,
-                "power": status,
-            })
+        handle_suspend_decision(
+            decision=decision,
+            runtime=runtime,
+            app_url=app_url,
+            stop_before_suspend=bool(cfg["stop_before_suspend"]),
+            restart_after_resume=bool(cfg["restart_after_resume"]),
+            suspend_command=suspend_command,
+            dry_run=args.dry_run,
+        )
 
         time.sleep(interval)
 
