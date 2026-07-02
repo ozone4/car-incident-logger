@@ -178,6 +178,88 @@ class TestALPRRunnerNoDeps:
         assert "detector" in status
         assert "ocr" in status
 
+    def test_status_info_reports_heuristic_mode_when_plate_model_missing(self):
+        from modules.alpr_runner import _BaseDetector, _BaseRecognizer, _VehicleDetector
+
+        class _MissingPlateDetector(_BaseDetector):
+            def initialize(self):
+                self.status = "model_missing"
+                self.error = "missing plate_detector.pt"
+                return False
+
+            def detect(self, frame):
+                return []
+
+        class _ReadyRecognizer(_BaseRecognizer):
+            def initialize(self):
+                self.status = "ready"
+                return True
+
+            def recognize(self, image):
+                return []
+
+        class _ReadyVehicleDetector(_VehicleDetector):
+            def initialize(self):
+                self.status = "ready"
+                return True
+
+            def detect(self, frame):
+                return []
+
+        runner = ALPRRunner(
+            {},
+            detector=_MissingPlateDetector(),
+            recognizer=_ReadyRecognizer(),
+            vehicle_detector=_ReadyVehicleDetector(),
+        )
+        runner.initialize()
+
+        status = runner.status_info()
+        assert status["ready"] is True
+        assert status["mode"] == "vehicle_ocr_heuristic"
+        assert status["accuracy_warning"]
+        assert "plate detector" in status["accuracy_warning"].lower()
+
+    def test_status_info_reports_full_detector_mode_when_all_engines_ready(self):
+        from modules.alpr_runner import _BaseDetector, _BaseRecognizer, _VehicleDetector
+
+        class _ReadyPlateDetector(_BaseDetector):
+            def initialize(self):
+                self.status = "ready"
+                return True
+
+            def detect(self, frame):
+                return []
+
+        class _ReadyRecognizer(_BaseRecognizer):
+            def initialize(self):
+                self.status = "ready"
+                return True
+
+            def recognize(self, image):
+                return []
+
+        class _ReadyVehicleDetector(_VehicleDetector):
+            def initialize(self):
+                self.status = "ready"
+                return True
+
+            def detect(self, frame):
+                return []
+
+        runner = ALPRRunner(
+            {},
+            detector=_ReadyPlateDetector(),
+            recognizer=_ReadyRecognizer(),
+            vehicle_detector=_ReadyVehicleDetector(),
+        )
+        runner.initialize()
+
+        status = runner.status_info()
+        assert status["ready"] is True
+        assert status["mode"] == "vehicle_plate_detector_ocr"
+        assert status["accuracy_warning"] is None
+
     def test_run_on_frame_returns_list(self):
         runner = ALPRRunner({})
         runner.initialize()

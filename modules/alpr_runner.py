@@ -579,13 +579,25 @@ class ALPRRunner:
         """Return a dict describing engine states, suitable for UI/API display."""
         detector_ready = self._init_status.get("detector") == "ready"
         ocr_ready = self._init_status.get("ocr") == "ready"
-        if detector_ready and ocr_ready:
-            mode = "detector_ocr"
+        vehicle_ready = self._init_status.get("vehicle_detector") == "ready"
+        accuracy_warning = None
+
+        if vehicle_ready and detector_ready and ocr_ready:
+            mode = "vehicle_plate_detector_ocr"
+        elif detector_ready and ocr_ready:
+            mode = "plate_detector_ocr"
+        elif vehicle_ready and ocr_ready:
+            mode = "vehicle_ocr_heuristic"
+            accuracy_warning = (
+                "Plate detector unavailable; using lower-accuracy vehicle-crop OCR heuristic. "
+                "Install/download a plate detector model and set alpr.yolo_model_path."
+            )
         elif ocr_ready:
-            mode = "ocr_fallback"
+            mode = "ocr_only_unusable"
+            accuracy_warning = "OCR is ready, but no detector can provide tight plate crops."
         else:
             mode = "unavailable"
-        return {"ready": self._ready, "mode": mode, **self._init_status}
+        return {"ready": self._ready, "mode": mode, "accuracy_warning": accuracy_warning, **self._init_status}
 
     def run_on_frame(self, frame: np.ndarray) -> list[dict]:
         """
