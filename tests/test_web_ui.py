@@ -9,7 +9,7 @@ import json
 import sys
 import types
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -271,6 +271,108 @@ def test_plate_sightings_deduplicate_same_frame_before_confirmation():
         sighting = _alpr._state["active_sightings"]["ABC123"]
         assert sighting["seen_count"] == 1
         assert sighting.get("_needs_snapshot") is False
+
+
+# ── Appliance power status tests ─────────────────────────────────────────────
+
+def test_appliance_status_uses_live_power_when_watcher_state_is_stale(client, tmp_path):
+    from web import app as web_app
+
+    state_file = tmp_path / "appliance-power-state.json"
+    state_file.write_text(json.dumps({
+        "updated_at": "2026-05-10T18:28:19Z",
+        "state": "battery",
+        "grace_remaining_seconds": 123,
+        "power": {"available": True, "on_ac": False, "state": "battery", "battery_percent": 50},
+    }), encoding="utf-8")
+
+    live_power = {"available": True, "on_ac": True, "state": "ac", "battery_percent": 91}
+    with patch.object(web_app, "_appliance_config", return_value={
+        "enabled": True,
+        "app_url": "http://127.0.0.1:5000",
+        "check_interval_seconds": 5,
+        "battery_grace_seconds": 600,
+        "critical_battery_percent": 12,
+        "stop_before_suspend": True,
+        "restart_after_resume": True,
+        "suspend_command": "systemctl suspend",
+        "state_file": str(state_file),
+    }), patch.object(web_app, "read_power_status", return_value=live_power), patch.object(web_app.time, "time", return_value=1783022405.0):
+        resp = client.get("/appliance/status")
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["watcher_stale"] is True
+    assert data["power_source"] == "live"
+    assert data["power"]["on_ac"] is True
+    assert data["state"] == "ac"
+    assert data["grace_remaining_seconds"] == 600
+
+
+def test_appliance_status_uses_fresh_watcher_state(client, tmp_path):
+    from web import app as web_app
+
+    state_file = tmp_path / "appliance-power-state.json"
+    state_file.write_text(json.dumps({
+        "updated_at": "2026-07-02T20:00:00Z",
+        "state": "battery",
+        "grace_remaining_seconds": 321,
+        "power": {"available": True, "on_ac": False, "state": "battery", "battery_percent": 88},
+    }), encoding="utf-8")
+
+    with patch.object(web_app, "_appliance_config", return_value={
+        "enabled": True,
+        "app_url": "http://127.0.0.1:5000",
+        "check_interval_seconds": 5,
+        "battery_grace_seconds": 600,
+        "critical_battery_percent": 12,
+        "stop_before_suspend": True,
+        "restart_after_resume": True,
+        "suspend_command": "systemctl suspend",
+        "state_file": str(state_file),
+    }), patch.object(web_app, "read_power_status", return_value={"available": True, "on_ac": True, "state": "ac"}), patch.object(web_app.time, "time", return_value=1783022405.0):
+        resp = client.get("/appliance/status")
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["watcher_stale"] is False
+    assert data["power_source"] == "watcher_state"
+    assert data["power"]["on_ac"] is False
+    assert data["state"] == "battery"
+    assert data["grace_remaining_seconds"] == 321
+
+
+def test_appliance_status_treats_future_watcher_state_as_stale(client, tmp_path):
+    from web import app as web_app
+
+    state_file = tmp_path / "appliance-power-state.json"
+    state_file.write_text(json.dumps({
+        "updated_at": "2026-07-02T21:00:00Z",
+        "state": "battery",
+        "grace_remaining_seconds": 111,
+        "power": {"available": True, "on_ac": False, "state": "battery", "battery_percent": 80},
+    }), encoding="utf-8")
+
+    live_power = {"available": True, "on_ac": True, "state": "ac", "battery_percent": 91}
+    with patch.object(web_app, "_appliance_config", return_value={
+        "enabled": True,
+        "app_url": "http://127.0.0.1:5000",
+        "check_interval_seconds": 5,
+        "battery_grace_seconds": 600,
+        "critical_battery_percent": 12,
+        "stop_before_suspend": True,
+        "restart_after_resume": True,
+        "suspend_command": "systemctl suspend",
+        "state_file": str(state_file),
+    }), patch.object(web_app, "read_power_status", return_value=live_power), patch.object(web_app.time, "time", return_value=1783022405.0):
+        resp = client.get("/appliance/status")
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["watcher_stale"] is True
+    assert data["power_source"] == "live"
+    assert data["power"]["on_ac"] is True
+    assert data["state"] == "ac"
 
 
 # ── Health + Storage route tests ─────────────────────────────────────────────

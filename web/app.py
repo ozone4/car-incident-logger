@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 import zipfile
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
@@ -1076,6 +1077,30 @@ def _read_appliance_state(state_file: str) -> dict:
     return {}
 
 
+def _parse_utc_timestamp(value: object) -> float | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
+def _appliance_state_freshness(state: dict, max_age_seconds: float) -> tuple[bool, float | None]:
+    updated_ts = _parse_utc_timestamp(state.get("updated_at"))
+    if updated_ts is None:
+        return False, None
+    raw_age = time.time() - updated_ts
+    if raw_age < 0:
+        # Do not trust future-dated watcher files; clock skew/corruption should
+        # fail closed to live power rather than preserving stale suspend state.
+        return False, round(raw_age, 1)
+    return raw_age <= max_age_seconds, round(raw_age, 1)
+
+
 @app.route("/system/power")
 def system_power_api():
     """Return Linux AC/battery power status for appliance installs."""
@@ -1087,10 +1112,19 @@ def appliance_status_api():
     """Return dashboard-friendly Linux appliance status."""
     cfg = _appliance_config()
     state = _read_appliance_state(str(cfg["state_file"]))
-    power = state.get("power") if isinstance(state.get("power"), dict) else read_power_status()
+    live_power = read_power_status()
+    max_state_age = max(30.0, float(cfg["check_interval_seconds"]) * 3.0)
+    watcher_fresh, watcher_age = _appliance_state_freshness(state, max_state_age)
+    state_power = state.get("power") if isinstance(state.get("power"), dict) else None
+    if watcher_fresh and state_power is not None:
+        power = state_power
+        power_source = "watcher_state"
+    else:
+        power = live_power
+        power_source = "live"
 
     grace = int(cfg["battery_grace_seconds"])
-    remaining = state.get("grace_remaining_seconds")
+    remaining = state.get("grace_remaining_seconds") if watcher_fresh else None
     if remaining is None:
         remaining = grace if power.get("on_ac") is not False else 0
 
@@ -1101,10 +1135,13 @@ def appliance_status_api():
         "enabled": cfg["enabled"],
         "mode": "linux-appliance",
         "power": power,
-        "state": state.get("state") or power.get("state") or "unknown",
+        "power_source": power_source,
+        "watcher_stale": not watcher_fresh,
+        "watcher_age_seconds": watcher_age,
+        "state": (state.get("state") if watcher_fresh else None) or power.get("state") or "unknown",
         "grace_seconds": grace,
         "grace_remaining_seconds": remaining,
-        "battery_since": state.get("battery_since"),
+        "battery_since": state.get("battery_since") if watcher_fresh else None,
         "last_suspend_reason": state.get("last_suspend_reason"),
         "last_suspend_at": state.get("last_suspend_at"),
         "last_resume_at": state.get("last_resume_at"),
